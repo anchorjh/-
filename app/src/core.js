@@ -491,6 +491,16 @@
     };
   }
 
+  // 작가 본인 원고 샘플에서 문체 통계 지문을 만든다(로컬 계산, 특정 작가 모방용이 아니다).
+  function styleFingerprint(text) {
+    const paras = splitLines(text).filter((t) => t.trim());
+    if (!paras.length) return { text: '', stats: null };
+    const st = styleStats({ chapters: [{ title: '', paragraphs: paras.map((t) => ({ text: t })) }] }, { custom: [], names: [] });
+    const avgPara = round1(paras.reduce((a, t) => a + countNoSpaces(t), 0) / paras.length);
+    const ends = st.topEndings.slice(0, 5).map(([k]) => k).join('·');
+    return { text: `문장 평균 ${st.avgLen}자(중앙값 ${st.medianLen}자), 대화 비율 ${(st.dialogRatio * 100).toFixed(0)}%, 문단 평균 ${avgPara}자` + (ends ? `, 자주 쓰는 문장 끝: ${ends}` : ''), stats: { avgLen: st.avgLen, medianLen: st.medianLen, dialogRatio: st.dialogRatio, avgPara, sentences: st.sentenceCount } };
+  }
+
   /* ───────────── 백업(JSON) ───────────── */
   const BACKUP_SCHEMA = 1;
   function makeBackup(works, versions, prefs) {
@@ -583,7 +593,7 @@
     newParagraph, newChapter, chapterText, versionText, isSceneBreak, reconcileParagraphs,
     makeVersion, cloneChapters, flattenParas, diffVersions, inlineDiff,
     findAll, replaceMatches, cleanText, headingOf, splitChapters,
-    toTxt, toMarkdown, privacyScan, sentencesOf, styleStats,
+    toTxt, toMarkdown, privacyScan, sentencesOf, styleStats, styleFingerprint,
     makeBackup, validateBackup, planImport, BACKUP_SCHEMA,
     docxXmlToParas, hwpxXmlToParas, decodeBytes, decodeXmlEntities,
   };

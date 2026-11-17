@@ -335,6 +335,7 @@
     async function run(job, runOpts) {
       runOpts = runOpts || {};
       const signal = runOpts.signal;
+      job._base = Object.assign({ calls: 0, inChars: 0, outChars: 0, ms: 0 }, job.stats);
       job.status = 'running'; job.pausedReason = ''; await save(job);
       const ctx = makeCtx(job, signal);
       for (;;) {
@@ -365,11 +366,11 @@
       await save(job);
       return job;
     }
-    async function save(job) { job.updatedAt = new Date().toISOString(); job.stats = Object.assign({}, engine.stats); if (job.log.length > 400) job.log = job.log.slice(-400); await storage.putJob(job); emit(job); }
+    async function save(job) { job.updatedAt = new Date().toISOString(); const b = job._base || { calls: 0, inChars: 0, outChars: 0, ms: 0 }; job.stats = { calls: b.calls + engine.stats.calls, inChars: b.inChars + engine.stats.inChars, outChars: b.outChars + engine.stats.outChars, ms: b.ms + engine.stats.ms }; if (job.log.length > 400) job.log = job.log.slice(-400); await storage.putJob(job); emit(job); }
 
     function makeCtx(job, signal) {
       const ctx = { job, signal, resultVer: null };
-      ctx.getWork = () => storage.getWork(job.workId);
+      ctx.getWork = () => (env.getWork ? env.getWork(job.workId) : storage.getWork(job.workId));
       ctx.updateWork = async (fn) => { if (env.updateWork) return env.updateWork(job.workId, fn); const w = await storage.getWork(job.workId); fn(w); await storage.putWork(w); return w; };
       ctx.base = async () => (job.params.baseVersionId ? storage.getVersion(job.params.baseVersionId) : null);
       ctx.saveJob = () => save(job);
@@ -408,7 +409,13 @@
   HANDLERS.design = async (ctx, st, idx) => {
     const work = await ctx.getWork();
     const idea = work.bible && work.bible.idea; if (!idea) throw new AIError('transform_error', '구상이 없습니다.');
-    const r = await ctx.call({ role: '기획자', task: 'design', prompt: P.T.design(work, idea, ctx.job.params.authorEdits || ''), tier: 'default', json: true, validate: V.design, label: '시놉시스·구조' });
+    let r;
+    try { r = await ctx.call({ role: '기획자', task: 'design', prompt: P.T.design(work, idea, ctx.job.params.authorEdits || ''), tier: 'default', json: true, validate: V.design, label: '시놉시스·구조' }); }
+    catch (e) {
+      if (e.code !== 'invalid_json') throw e; // 출력이 길어 잘렸을 수 있다: 더 짧은 형식으로 한 번 더
+      ctx.warn('설계안 출력이 형식에 맞지 않아 더 짧은 형식으로 다시 요청했습니다.');
+      r = await ctx.call({ role: '기획자', task: 'design', prompt: P.T.design(work, idea, ctx.job.params.authorEdits || '', true), tier: 'default', json: true, validate: V.design, label: '시놉시스·구조(간결)' });
+    }
     const d = r.data, total = work.brief.target.chars;
     // 분량 정규화: 장별 목표의 합이 전체 목표와 크게 어긋나면 비례 조정하고, 장면 분량도 맞춘다.
     let sum = d.chapters.reduce((a, c) => a + (c.targetChars || 0), 0);

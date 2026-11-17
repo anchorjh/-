@@ -282,3 +282,9 @@ test('aggregateCounts: 장별 합산이 전체 계산과 같다', () => {
   assert.equal(agg.grid.lines, whole.grid.lines);
   assert.equal(agg.sheets, whole.sheets);
 });
+
+test('styleFingerprint: 로컬 통계 한 줄', () => {
+  const f = C.styleFingerprint('그는 갔다. 나는 봤다.\n“어디 가요?” 하고 물었다. 비가 많이 왔다.');
+  assert.match(f.text, /문장 평균 .*대화 비율 \d+%/); assert.ok(f.stats.sentences >= 3);
+  assert.equal(C.styleFingerprint('').text, '');
+});

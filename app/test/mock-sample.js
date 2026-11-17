@@ -21,6 +21,7 @@ function makeMock(o) {
   const m = { calls: [], count: {}, script: o.script || [] };
   const fn = async (prompt, opts) => {
     const kind = kindOf(prompt); m.count[kind] = (m.count[kind] || 0) + 1; m.calls.push({ kind, prompt, opts });
+    if (m.delay) await new Promise((r) => setTimeout(r, m.delay));
     if (opts && opts.signal && opts.signal.aborted) throw { code: 'cancelled', message: 'aborted' };
     for (const s of m.script) { // {kind, nth?, code, times, truncated, when(prompt)}
       if (s.kind !== kind) continue; if (s.when && !s.when(prompt, m)) continue; if (s.times != null && s.times <= 0) continue;
@@ -64,6 +65,7 @@ function makeMock(o) {
         let t = block(prompt, 'TEXT_TO_REVISE');
         if (m.reviseHook) { const h = m.reviseHook(t, prompt); if (h != null) return { text: h, truncated: false }; }
         t = t.replace(/\[문제\] ?/g, '').replace(/ 정숙이/g, ' 정숙이 문득');
+        if (!/했었다/.test(t)) t = t.replace(/했다/, '했었다');
         return { text: t, truncated: false };
       }
       case 'proofread': { const t = block(prompt, 'TEXT'); const i = t.indexOf('되요'); return J({ fixes: i >= 0 ? [{ orig: t.slice(Math.max(0, i - 6), i + 2), fixed: t.slice(Math.max(0, i - 6), i) + '돼요', kind: '확정', reason: '맞춤법' }, { orig: '그렇게 말했다', fixed: '그리 말했다', kind: '권장', reason: '문체' }] : [] }); }

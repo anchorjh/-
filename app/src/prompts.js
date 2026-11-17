@@ -137,8 +137,8 @@
     task: '작가가 준 재료를 바탕으로 아이디어를 발전시킨다. 빈 항목은 가장 합리적인 값으로 정하되, 어떤 값을 임의로 정했는지 assumed에 적는다. 알려진 작품과 겹치는 요소가 있으면 similar에 솔직히 적는다(없으면 빈 배열).',
     sections: [{ tag: 'BRIEF', text: briefText(work.brief) }],
     format: 'JSON 객체 하나만 출력한다: {"logline":문자열,"coreIdea":문자열,"protagonistDesire":문자열,"mainConflict":문자열,"cause":문자열(사건의 발생 원인),"expectedEnding":문자열,"differentiators":[문자열],"similar":[{"title":문자열,"overlap":문자열,"differentiate":문자열}],"assumed":[문자열]}' });
-  T.design = (work, idea, extra) => compose({ role: '기획자', aiTells: true, style: styleGuide(work),
-    task: `확정된 구상을 바탕으로 이야기를 설계한다. 총 ${work.brief.chapterCount || '적절한 수의'}개 장으로 구성하고, 장별 targetChars의 합이 전체 목표 분량(${work.brief.target.chars}자) 근처가 되게 한다. 사건은 인물의 선택과 행동에서 일어나야 하고, 각 사건에는 원인이 있어야 한다. 한 장은 2~4개 장면(scenes)으로 나눈다.` + (extra ? ' 작가가 수정한 내용은 반드시 반영한다.' : ''),
+  T.design = (work, idea, extra, compact) => compose({ role: '기획자', aiTells: true, style: styleGuide(work),
+    task: `확정된 구상을 바탕으로 이야기를 설계한다. 총 ${work.brief.chapterCount || '적절한 수의'}개 장으로 구성하고, 장별 targetChars의 합이 전체 목표 분량(${work.brief.target.chars}자) 근처가 되게 한다. 사건은 인물의 선택과 행동에서 일어나야 하고, 각 사건에는 원인이 있어야 한다. 한 장은 2~4개 장면(scenes)으로 나눈다.` + (extra ? ' 작가가 수정한 내용은 반드시 반영한다.' : '') + (compact ? ' 출력이 길어 잘리지 않도록 모든 항목을 최대한 짧게 쓴다(요약은 한 문장, 장면은 장당 2개, 인물은 핵심 인물만).' : ''),
     sections: [{ tag: 'BRIEF', text: briefText(work.brief) }, { tag: 'IDEA', text: JSON.stringify(idea) }, extra ? { tag: 'AUTHOR_EDITS', text: extra } : null],
     format: 'JSON 객체 하나만: {"synopsis":문자열,"characters":[{"name":문자열,"age":문자열,"role":문자열,"desire":문자열,"speech":문자열(말투),"secret":문자열}],"relations":[{"a":문자열,"b":문자열,"relation":문자열}],"events":[{"no":숫자,"event":문자열,"cause":문자열}],"chapters":[{"no":숫자,"title":문자열,"pov":문자열(시점 인물),"goal":문자열,"summary":문자열,"keyEvents":[문자열],"function":문자열,"targetChars":숫자,"scenes":[{"summary":문자열,"targetChars":숫자}]}],"twists":[문자열]}' });
   T.writeScene = (work, o) => compose({ role: '소설가', aiTells: true, style: styleGuide(work),
@@ -198,6 +198,11 @@
   T.sceneMap = (o) => compose({ role: '각색자', task: '원작 일부와 변환본 일부를 비교해 장면 대응표를 만든다. 변환본의 장면 하나하나가 원작의 어느 부분에 해당하는지 적는다. relation: 유지 / 변경 / 삭제(원작에만 있음) / 신규(변환본에만 있음). 핵심 사건·인물 관계가 바뀌었으면 coreChange를 true로 한다.',
     sections: [{ tag: 'SOURCE', text: o.source }, { tag: 'CONVERTED', text: o.converted }],
     format: 'JSON 객체 하나만: {"scenes":[{"target":변환본 장면 식별(번호 또는 첫 문장),"source":원작 해당 부분(인용 또는 설명),"relation":"유지|변경|삭제|신규","coreChange":true|false,"note":문자열}]}' });
+
+  T.rebuttal = (o) => compose({ role: '심사위원', aiTells: false,
+    task: '작가가 아래 심사 보고서의 일부 지적에 반대한다. 반론을 읽고 타당한 부분은 인정해 평가를 고치고, 근거가 약하면 그 이유를 밝히며 기존 평가를 유지한다. 작가의 설명(원고 밖의 사실)과 원고에서 확인되는 사실을 구별해서 말한다. 작가를 달래려고 평가를 바꾸지 않고, 고집하려고 바꾸지 않는 일도 없다.',
+    sections: [{ tag: 'REPORT', text: o.report }, { tag: 'AUTHOR_OBJECTION', text: o.objection }, { tag: 'MANUSCRIPT_EXCERPT', text: o.excerpt }],
+    format: '다음 형식의 일반 글로 쓴다: 1) 인정하는 부분과 수정되는 평가 2) 유지하는 부분과 그 근거(원고 속 장면·문장 인용) 3) 수정 후 점수가 달라진다면 항목별 새 점수.' });
 
   return { PROMPT_VERSION, COMMON, AI_TELLS, aiTellsText, STYLE_PRESETS, POV_TEXT, styleGuide, ROLES, LEVELS, AUTOMATION, JUDGE_ANCHORS, JUDGE_DISCLAIMER, compose, fence, briefText, T };
 });

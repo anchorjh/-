@@ -365,3 +365,11 @@ test('estimateJob: 호출 수·시간 범위를 돌려주고, 단계가 끝나�
   job.steps.filter((s) => s.kind === 'draft_ch').forEach((s) => (s.status = 'done'));
   assert.ok(A.estimateJob(job).calls < e.calls);
 });
+
+test('설계: 출력이 형식에 안 맞으면 더 짧은 형식으로 한 번 더 요청하고 경고를 남긴다', async () => {
+  const env = setup({ script: [{ kind: 'design', code: 'invalid_json', times: 2 }] });
+  const w = newWork(); await env.storage.putWork(w);
+  const j = A.buildJob('phase', w, { phases: ['idea', 'design'] }); await env.storage.putJob(j); await env.runner.run(j);
+  assert.equal(j.status, 'done'); assert.ok(j.report.warnings.some((x) => /더 짧은 형식/.test(x)));
+  assert.match(env.sample.mock.calls.filter((c) => c.kind === 'design').pop().prompt, /최대한 짧게/);
+});

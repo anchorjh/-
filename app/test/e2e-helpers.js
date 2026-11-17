@@ -19,4 +19,9 @@ async function newPage(browser, opts) {
   await page.route('**/fonts.googleapis.com/**', (r) => r.fulfill({ body: '', contentType: 'text/css' }));
   return { ctx, page, errors };
 }
-module.exports = { serve, newPage, chromium };
+// 가짜 Claude(sample)를 페이지에 심는다. window.__mock.mock 으로 스크립트·지연을 조절한다.
+async function withMockClaude(ctx, opts) {
+  const src = fs.readFileSync(path.join(__dirname, 'mock-sample.js'), 'utf8');
+  await ctx.addInitScript(`(function(){ const module = { exports: {} }; ${src}\n window.__mock = module.exports.makeMock(${JSON.stringify(opts || {})}); window.__mockLib = module.exports; window.claude = { use: async (n) => (n === 'sample' ? window.__mock : null) }; })();`);
+}
+module.exports = { serve, newPage, chromium, withMockClaude };

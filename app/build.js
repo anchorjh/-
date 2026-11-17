@@ -1,7 +1,7 @@
 // 소설 작업실 빌드: src/* 를 하나의 HTML 조각(아티팩트용)으로 합친다.
 const fs = require('fs'), path = require('path');
 const rd = (f) => fs.readFileSync(path.join(__dirname, 'src', f), 'utf8');
-const scripts = ['core.js', 'docx.js', 'storage.js', 'app.js'].map((f) => { const s = rd(f); if (/<\/script/i.test(s)) throw new Error(f + '에 </script 가 있습니다'); return `<script>\n/* ${f} */\n${s}\n</script>`; });
+const scripts = ['core.js', 'docx.js', 'storage.js', 'prompts.js', 'ai.js', 'ai-ui.js', 'app.js'].map((f) => { const s = rd(f); if (/<\/script/i.test(s)) throw new Error(f + '에 </script 가 있습니다'); return `<script>\n/* ${f} */\n${s}\n</script>`; });
 const fragment = `<title>소설 작업실</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=Noto+Serif+KR:wght@400;600&display=swap">

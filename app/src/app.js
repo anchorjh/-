@@ -117,7 +117,7 @@
   async function loadWorks() {
     S.works = (await S.storage.listWorks()).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   }
-  async function openWork(id, tab) {
+  async function openWork(id, tab, view) {
     await flushAndSave();
     const w = await S.storage.getWork(id);
     if (!w) { toast('작품을 찾을 수 없습니다.', 'err'); return; }
@@ -131,7 +131,7 @@
     S.chIdx = ci >= 0 ? ci : 0; S.finder.matches = null; S.stats = null; S.cmpA = S.cmpB = null;
     if (tab) S.panelTab = tab;
     await S.storage.putWork(w);
-    go('write');
+    go(view || 'write');
   }
 
   /* 저장: 입력이 멈춘 뒤 저장하고, 저장 중 입력이 더 들어오면 다시 저장한다. */
@@ -191,16 +191,19 @@
     renderNav(); renderStorageBanner();
     const main = $('#main'); main.replaceChildren();
     if (S.view === 'library') renderLibrary(main);
+    else if (S.view === 'wizard') NSApp.views.wizard(main);
+    else if (S.view === 'settings') renderSettings(main);
     else if (!S.work) { go('library'); return; }
     else if (S.view === 'write') renderWrite(main);
     else if (S.view === 'compare') renderCompare(main);
     else if (S.view === 'stats') renderStats(main);
-    else if (S.view === 'settings') renderSettings(main);
+    else if (S.view === 'ai') NSApp.views.ai(main);
+    if (NSApp.hooks.afterRender) NSApp.hooks.afterRender();
     refreshSaveState();
   }
   function renderNav() {
-    const items = [['library', '작품 보관함'], ['write', '집필 공간'], ['compare', '버전 비교'], ['stats', '문체 통계'], ['settings', '설정·백업']];
-    const nav = $('#nav'); nav.replaceChildren(...items.map(([k, t]) => h('button', { 'aria-current': S.view === k ? 'page' : null, disabled: k !== 'library' && !S.work && k !== 'settings', onclick: () => go(k) }, t)));
+    const items = [['library', '작품 보관함'], ['wizard', 'AI로 새 작품'], ['write', '집필 공간'], ['ai', 'AI 작업실'], ['compare', '버전 비교'], ['stats', '문체 통계'], ['settings', '설정·백업']];
+    const nav = $('#nav'); nav.replaceChildren(...items.map(([k, t]) => h('button', { 'aria-current': S.view === k ? 'page' : null, disabled: k !== 'library' && !S.work && k !== 'settings' && k !== 'wizard', onclick: () => go(k) }, t)));
     $('#worktitle').textContent = S.work && S.view !== 'library' ? S.work.title : '';
   }
   function refreshSaveState() {
@@ -222,6 +225,7 @@
       h('div', { class: 'page-head' }, h('h1', {}, '작품 보관함'),
         h('div', { class: 'btn-row' },
           h('button', { class: 'btn primary', onclick: newWorkDialog }, '새 작품'),
+          h('button', { class: 'btn', onclick: () => go('wizard') }, 'AI로 새 작품 쓰기'),
           h('button', { class: 'btn', onclick: () => pickFile('.txt,.md,.docx,.hwpx,.hwp,text/plain', async (f) => { const r = await importDialog(f, { mode: 'new' }); if (r) await createWorkFromImport(r); }) }, '파일로 새 작품 만들기'),
           h('button', { class: 'btn', onclick: () => pickFile('.json,application/json', restoreBackup) }, '백업 불러오기'))),
       noBackup ? h('div', { class: 'banner' }, '아직 백업한 적이 없습니다. 원고는 이 브라우저에만 저장되어, 브라우저 데이터를 지우면 함께 사라집니다.', h('button', { class: 'btn sm', onclick: () => go('settings') }, '백업하러 가기')) : null,
@@ -236,7 +240,7 @@
   function workRow(w) {
     const vmeta = null;
     return h('tr', {},
-      h('td', {}, h('span', { class: 'title', tabindex: 0, onclick: () => openWork(w.id), onkeydown: (e) => { if (e.key === 'Enter') openWork(w.id); } }, w.title)),
+      h('td', {}, h('span', { class: 'title', tabindex: 0, onclick: () => openWork(w.id), onkeydown: (e) => { if (e.key === 'Enter') openWork(w.id); } }, w.title), w.format === 'script' ? h('span', { class: 'pill', style: 'margin-left:6px' }, '시나리오') : null, w.derivedFrom ? h('span', { class: 'pill', style: 'margin-left:6px', title: '다른 작품에서 변환해 만든 파생 작품' }, '파생') : null),
       h('td', {}, w.genre), h('td', {}, h('span', { class: 'pill accent' }, w.status)),
       h('td', { class: 'small', 'data-vlabel': w.id }, '…'),
       h('td', { class: 'num' }, fmt(w.counts.withSpaces)), h('td', { class: 'num' }, fmt(w.counts.noSpaces)), h('td', { class: 'num' }, String(w.counts.sheets) + '매'),
@@ -653,7 +657,7 @@
     const names = h('input', { type: 'text', 'aria-label': '주요 등장인물', placeholder: '쉼표로 구분: 정숙, 용석' }); names.value = (w.names || []).join(', ');
     names.addEventListener('input', () => { w.names = names.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean); save(); });
     pb.append(h('div', { class: 'stack' }, txt('title', '작품명'), h('div', { class: 'grid2' }, sel('genre', '장르', GENRES), sel('status', '집필 상태', STATUSES)),
-      h('label', { class: 'fld' }, '주요 등장인물 (문체 통계의 인물 등장 분석에 쓰입니다)', names), txt('synopsis', '줄거리', 4), txt('setting', '핵심 설정', 3), txt('todo', '집필하면서 확인할 사항', 3), txt('memo', '수정 메모', 3),
+      h('label', { class: 'fld' }, '주요 등장인물 (문체 통계의 인물 등장 분석에 쓰입니다)', names), txt('synopsis', '줄거리', 4), txt('setting', '핵심 설정', 3), txt('todo', '집필하면서 확인할 사항', 3), txt('memo', '수정 메모', 3), txt('styleGuide', '문체 지침 (AI 작업에 쓰임. 비워 두면 “한국적 현실주의” 기본값)', 5),
       h('div', { class: 'grid2' }, txt('penName', '필명 (응모 점검용)'), txt('realName', '본명 (응모 점검용)')),
       h('div', { class: 'small muted' }, `만든 날 ${fmtDate(w.createdAt)} · 수정 ${fmtDate(w.updatedAt)}`)));
   }
@@ -680,7 +684,7 @@
     list.replaceChildren(...rows.map(([m, d]) => {
       const cur = m.id === S.ver.id;
       return h('div', { class: 'row' + (cur ? ' cur' : ''), style: `margin-left:${Math.min(d, 5) * 12}px` },
-        h('div', { class: 'grow' }, h('div', { class: 't' }, m.label, ' ', h('span', { class: 'pill' }, m.kind), m.frozen ? h('span', { class: 'pill accent', style: 'margin-left:4px' }, '고정') : h('span', { class: 'pill warn', style: 'margin-left:4px' }, '작업 중'), cur ? h('span', { class: 'pill', style: 'margin-left:4px' }, '현재') : null),
+        h('div', { class: 'grow' }, h('div', { class: 't' }, m.label, ' ', h('span', { class: 'pill' }, m.kind), m.frozen ? h('span', { class: 'pill accent', style: 'margin-left:4px' }, '고정') : h('span', { class: 'pill warn', style: 'margin-left:4px' }, '작업 중'), cur ? h('span', { class: 'pill', style: 'margin-left:4px' }, '현재') : null, m.ai ? h('span', { class: 'pill', style: 'margin-left:4px' }, 'AI' + (m.aiChars ? ' ' + Math.round(m.aiChars * 100) + '%' : '')) : null, m.ai && m.ai.status !== 'complete' ? h('span', { class: 'pill warn', style: 'margin-left:4px' }, m.ai.status === 'partial' ? '미완성' : '일부 미처리') : null),
           h('div', { class: 'small muted mono' }, `${fmtDate(m.updatedAt)} · ${m.stats ? fmt(m.stats.withSpaces) + '자' : '-'}` + (m.note ? ' · ' + m.note : ''))),
         h('div', { class: 'btn-row', style: 'flex-wrap:nowrap' },
           cur ? null : h('button', { class: 'btn sm', onclick: () => openVersion(m.id) }, '열기'),
@@ -728,6 +732,29 @@
     const d = C.diffVersions(A, B);
     const ta = C.aggregateCounts(A.chapters.map((c) => C.countText(C.chapterText(c), S.work.sheet)), S.work.sheet), tb = C.aggregateCounts(B.chapters.map((c) => C.countText(C.chapterText(c), S.work.sheet)), S.work.sheet);
     const delta = tb.withSpaces - ta.withSpaces;
+    const canRevert = true;
+    const revertRow = async (kind, r) => {
+      let target;
+      if (B.id === S.ver.id) { if (S.ver.frozen) { ensureEditable(); S.cmpB = S.ver.id; } target = S.ver; }
+      else if (B.frozen) {
+        let n = metas.filter((m) => m.kind === '작업본').length + 1; while (metas.some((m) => m.label === '작업본 ' + n)) n++;
+        target = C.makeVersion({ workId: S.work.id, parentId: B.id, label: '작업본 ' + n, kind: '작업본', note: '비교 화면에서 단락을 되돌림', chapters: C.cloneChapters(B.chapters) });
+        S.cmpB = target.id; toast(`“${B.label}”은(는) 그대로 두고 새 작업본(${target.label})에 반영합니다.`);
+      } else target = B;
+      const findPara = (id) => { for (const ch of target.chapters) { const i = ch.paragraphs.findIndex((p) => p.id === id); if (i >= 0) return [ch, i]; } return null; };
+      if (kind === 'mod') { const f = findPara(r.b.id); if (f) { f[0].paragraphs[f[1]] = Object.assign({}, f[0].paragraphs[f[1]], { text: r.a.text, source: 'author' }); } }
+      else if (kind === 'add') { const f = findPara(r.b.id); if (f) { f[0].paragraphs.splice(f[1], 1); if (!f[0].paragraphs.length) f[0].paragraphs.push(C.newParagraph('')); } }
+      else if (kind === 'del') {
+        const aCh = A.chapters.find((c) => c.id === r.a.chapterId) || A.chapters[r.a.chapterIndex];
+        const tCh = target.chapters.find((c) => c.id === (aCh && aCh.id)) || target.chapters[Math.min(r.a.chapterIndex, target.chapters.length - 1)];
+        const ai = aCh.paragraphs.findIndex((p) => p.id === r.a.id); let at = 0;
+        for (let k = ai - 1; k >= 0; k--) { const j = tCh.paragraphs.findIndex((p) => p.id === aCh.paragraphs[k].id); if (j >= 0) { at = j + 1; break; } }
+        tCh.paragraphs.splice(at, 0, Object.assign({}, aCh.paragraphs[ai]));
+      }
+      S.cc = new Map();
+      if (target === S.ver) { markDirty(); await saveNow(); } else await S.storage.putVersion(target);
+      render();
+    };
     const drawBody = () => {
       const grid = h('div', { class: 'diff' }, h('div', { class: 'h' }, `A · ${A.label}`), h('div', { class: 'h' }, `B · ${B.label}`));
       let shown = 0, run = 0, lastChap = null;
@@ -747,6 +774,12 @@
         } else if (r.type === 'del') { L = h('div', { class: 'c l del' }, r.a.text || '(빈 줄)'); R = h('div', { class: 'c r' }, h('span', { class: 'empty-cell' }, '삭제됨')); }
         else if (r.type === 'add') { L = h('div', { class: 'c l' }, h('span', { class: 'empty-cell' }, '없음')); R = h('div', { class: 'c r add' }, r.b.text || '(빈 줄)'); }
         else { L = h('div', { class: 'c l' }, r.a.text); R = h('div', { class: 'c r' }, r.b.text); }
+        if (canRevert) {
+          const act = (label, fn) => h('div', { style: 'margin-top:6px' }, h('button', { class: 'btn sm', onclick: fn }, label));
+          if (r.type === 'mod') R.append(act('이 단락을 A(이전)로 되돌리기', () => revertRow('mod', r)));
+          else if (r.type === 'add') R.append(act('이 단락 삭제', () => revertRow('add', r)));
+          else if (r.type === 'del') L.append(act('삭제된 단락 복원', () => revertRow('del', r)));
+        }
         grid.append(L, R); shown++;
       }
       flushRun();
@@ -826,12 +859,13 @@
           h('dt', {}, '사용량'), h('dd', {}, est ? `${(est.usage / 1048576).toFixed(2)} MB / ${(est.quota / 1048576).toFixed(0)} MB` : '알 수 없음'),
           h('dt', {}, '마지막 백업'), h('dd', {}, S.lastBackup ? fmtDate(S.lastBackup) : '없음')),
         S.storage.kind === 'indexeddb' && !pers ? h('button', { class: 'btn', onclick: async () => { const ok = await S.storage.requestPersist(); toast(ok ? '영구 저장이 허용되었습니다.' : '브라우저가 허용하지 않았습니다. 백업을 자주 받아 두세요.'); render(); } }, '영구 저장 요청') : null,
-        h('div', { class: 'small muted' }, '이 앱은 다른 기기와 동기화되지 않습니다. 이 기기의 브라우저 데이터를 지우면 원고도 사라지므로, 정기적으로 JSON 백업을 받아 보관하세요. 1단계에는 AI 기능이 없어 원고가 외부로 전송되지 않습니다.')),
+        h('div', { class: 'small muted' }, '이 앱은 다른 기기와 동기화되지 않습니다. 이 기기의 브라우저 데이터를 지우면 원고도 사라지므로, 정기적으로 JSON 백업을 받아 보관하세요. 편집·계산·비교·문체 통계는 이 기기 안에서만 처리됩니다. 단, “AI 작업”을 실행하면 해당 원고와 설정이 Claude로 전송되어 처리됩니다.')),
       h('div', { class: 'card stack' }, h('h2', {}, '백업과 복원'),
-        h('div', { class: 'small muted' }, 'JSON 백업에는 모든 작품의 작품 정보, 전체 버전(원문·고정본·작업본), 단락 잠금·메모가 들어 있습니다. 불러올 때는 기존 작품을 덮어쓰지 않고 추가합니다.'),
+        h('div', { class: 'small muted' }, 'JSON 백업에는 모든 작품의 작품 정보, 전체 버전(원문·고정본·작업본), 단락 잠금·메모가 들어 있습니다. 불러올 때는 기존 작품을 덮어쓰지 않고 추가합니다. AI 작업의 결과 버전과 심사 기록은 작품에 들어 있어 함께 백업되지만, 작업 목록(호출 기록)은 백업에 포함되지 않습니다.'),
         h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onclick: async () => { await exportBackup(null); render(); } }, '전체 백업 내려받기'), w ? h('button', { class: 'btn', onclick: () => exportBackup(w.id) }, '이 작품만 백업') : null, h('button', { class: 'btn', onclick: () => pickFile('.json,application/json', restoreBackup) }, '백업 불러오기'))),
+      ...(NSApp.hooks.settings || []).map((fn) => fn()),
       h('div', { class: 'card stack' }, h('h2', {}, '이 버전에서 제공하지 않는 것'),
-        h('ul', { class: 'small muted', style: 'margin:0;padding-left:18px' }, ['AI 집필·개고·교열·심사·변환 (다음 단계)', '인물·설정 관리, 역사 고증, 공모전 관리, 문체 프로필 (다음 단계)', '다른 기기와의 동기화, 계정, 클라우드 저장', 'HWP(구형) 파일 읽기 — HWPX·DOCX·TXT로 저장해 올려 주세요', '한글(HWPX) 내보내기 — DOCX로 내보낸 뒤 한글에서 열 수 있습니다'].map((t) => h('li', {}, t))))));
+        h('ul', { class: 'small muted', style: 'margin:0;padding-left:18px' }, ['AI 교열 단독 실행, 장면별 AI 작업실, 장르 전환, 결말 재구성 (다음 단계)', '인물·설정 관리 화면, 역사 고증, 공모전 관리, 문체 프로필 화면 (다음 단계)', '다른 기기와의 동기화, 계정, 클라우드 저장', 'HWP(구형) 파일 읽기 — HWPX·DOCX·TXT로 저장해 올려 주세요', '한글(HWPX) 내보내기 — DOCX로 내보낸 뒤 한글에서 열 수 있습니다'].map((t) => h('li', {}, t))))));
   }
   function sheetCard(w) {
     const o = C.sheetSettings(w.sheet), box = h('div', {});
@@ -877,15 +911,27 @@
     await S.storage.putVersion(v1); await S.storage.putVersion(v2); await S.storage.putWork(w);
   }
 
+  /* ───────────── 다른 모듈(AI 화면)에 열어 주는 것 ───────────── */
+  const NSApp = {
+    S, h, $, fmt, pad, fmtDate, toast, modal, askConfirm, saveFile, go, render, openWork, loadWorks, defaultWork, flushAndSave, pickFile, importDialog, createWorkFromImport,
+    markDirty, saveNow, jumpTo, openVersion, KINDS, GENRES, STATUSES, TAB, verMeta, views: {}, hooks: { settings: [] },
+    get storage() { return S.storage; },
+    getWork: async (id) => (S.work && S.work.id === id ? JSON.parse(JSON.stringify(S.work)) : S.storage.getWork(id)),
+    updateWork: async (id, fn) => { if (S.work && S.work.id === id) { fn(S.work); await S.storage.putWork(S.work); return S.work; } const w = await S.storage.getWork(id); fn(w); await S.storage.putWork(w); return w; },
+    afterVersionsChanged: async () => { if (S.work) { try { S.versions = await S.storage.listVersionMeta(S.work.id); } catch (e) { /* 다음에 다시 읽는다 */ } } },
+  };
+  window.NSApp = NSApp;
+
   /* ───────────── 시작 ───────────── */
   async function boot() {
     $('#app').replaceChildren(
-      h('div', { class: 'top' }, h('div', { class: 'brand' }, '《소설 작업실》'), h('nav', { class: 'nav', id: 'nav', 'aria-label': '주 메뉴' }), h('div', { class: 'small muted', id: 'worktitle', style: 'font-weight:600' }), h('div', { class: 'spacer' }), h('div', { class: 'savestate', id: 'savestate', 'data-s': 'saved' })),
+      h('div', { class: 'top' }, h('div', { class: 'brand' }, '《소설 작업실》'), h('nav', { class: 'nav', id: 'nav', 'aria-label': '주 메뉴' }), h('div', { class: 'small muted', id: 'worktitle', style: 'font-weight:600' }), h('div', { class: 'spacer' }), h('div', { id: 'aistatus' }), h('div', { class: 'savestate', id: 'savestate', 'data-s': 'saved' })),
       h('div', { id: 'storagebanner' }), h('main', { id: 'main' }), h('div', { id: 'modals' }), h('div', { id: 'toasts', 'aria-live': 'polite' }));
     S.storage = await ST.createStorage();
     try { Object.assign(S.prefs, (await S.storage.getMeta('prefs')) || {}); S.lastBackup = (await S.storage.getMeta('lastBackup')) || null; } catch (e) { /* 기본값 사용 */ }
     applyPrefs();
     try { if (!(await S.storage.getMeta('seeded'))) { await seedSample(); await S.storage.setMeta('seeded', true); } } catch (e) { /* 예시 작품은 없어도 된다 */ }
+    if (window.NSAIUI) { try { await window.NSAIUI.init(NSApp); } catch (e) { console.error('AI 화면 초기화 실패', e); } }
     await loadWorks(); render();
     if (S.storage.kind === 'indexeddb') S.storage.requestPersist();
     if (bc) bc.onmessage = (e) => { const m = e.data; if (m && m.from !== TAB.id && S.ver && m.versionId === S.ver.id && !S.otherWindow) { S.otherWindow = true; if (S.view === 'write') renderBanner(); } };
