@@ -100,7 +100,7 @@
     }
     if (typeof data === 'string') {
       const ta = h('textarea', { class: 'field', rows: 12, readonly: true, 'aria-label': '내용', style: 'font-family: monospace' }); ta.value = data;
-      modal({ title: '이 환경에서는 파일 저장이 막혀 있습니다', wide: true, body: [h('div', { class: 'muted' }, '아래 내용을 전체 복사해 직접 파일로 저장해 두세요: ' + filename), ta], actions: (close) => [h('button', { class: 'btn', onclick: async () => { ta.select(); try { await navigator.clipboard.writeText(data); toast('복사했습니다.'); } catch (e) { toast('선택된 내용을 Ctrl+C로 복사하세요.'); } } }, '전체 복사'), h('button', { class: 'btn primary', onclick: () => close() }, '닫기')] });
+      await new Promise((resolve) => modal({ title: '이 환경에서는 파일 저장이 막혀 있습니다', wide: true, onClose: () => resolve(), body: [h('div', { class: 'muted' }, '아래 내용을 전체 복사해 직접 파일로 저장해 두세요: ' + filename), ta], actions: (close) => [h('button', { class: 'btn', onclick: async () => { ta.select(); try { await navigator.clipboard.writeText(data); toast('복사했습니다.'); } catch (e) { toast('선택된 내용을 Ctrl+C로 복사하세요.'); } } }, '전체 복사'), h('button', { class: 'btn primary', onclick: () => close() }, '닫기')] }));
     } else toast('이 환경에서는 이진 파일(DOCX)을 저장할 수 없습니다. TXT나 Markdown으로 내보내 주세요.', 'err');
     return false;
   }
@@ -196,6 +196,7 @@
     else if (S.view === 'wizard') NSApp.views.wizard(main);
     else if (S.view === 'settings') renderSettings(main);
     else if (S.view === 'profiles') NSApp.views.profiles(main);
+    else if (S.view === 'contests') NSApp.views.contests(main);
     else if (!S.work) { go('library'); return; }
     else if (S.view === 'write') renderWrite(main);
     else if (S.view === 'compare') renderCompare(main);
@@ -206,8 +207,8 @@
     refreshSaveState();
   }
   function renderNav() {
-    const items = [['library', '작품 보관함'], ['wizard', 'AI로 새 작품'], ['write', '집필 공간'], ['ai', 'AI 작업실'], ['compare', '버전 비교'], ['stats', '문체 통계'], ['profiles', '문체 프로필'], ['settings', '설정·백업']];
-    const nav = $('#nav'); nav.replaceChildren(...items.map(([k, t]) => h('button', { 'aria-current': S.view === k ? 'page' : null, disabled: k !== 'library' && !S.work && k !== 'settings' && k !== 'wizard' && k !== 'profiles', onclick: () => go(k) }, t)));
+    const items = [['library', '작품 보관함'], ['wizard', 'AI로 새 작품'], ['write', '집필 공간'], ['bible', '인물·설정'], ['ai', 'AI 작업실'], ['compare', '버전 비교'], ['stats', '문체 통계'], ['profiles', '문체 프로필'], ['contests', '공모전'], ['settings', '설정·백업']];
+    const nav = $('#nav'); nav.replaceChildren(...items.map(([k, t]) => h('button', { 'aria-current': S.view === k ? 'page' : null, disabled: k !== 'library' && !S.work && k !== 'settings' && k !== 'wizard' && k !== 'profiles' && k !== 'contests', onclick: () => go(k) }, t)));
     $('#worktitle').textContent = S.work && S.view !== 'library' ? S.work.title : '';
   }
   function refreshSaveState() {
@@ -232,6 +233,7 @@
           h('button', { class: 'btn', onclick: () => go('wizard') }, 'AI로 새 작품 쓰기'),
           h('button', { class: 'btn', onclick: () => pickFile('.txt,.md,.docx,.hwpx,.hwp,text/plain', async (f) => { const r = await importDialog(f, { mode: 'new' }); if (r) await createWorkFromImport(r); }) }, '파일로 새 작품 만들기'),
           h('button', { class: 'btn', onclick: () => pickFile('.json,application/json', restoreBackup) }, '백업 불러오기'))),
+      !S.onboarded ? h('div', { class: 'banner info', id: 'onboarding' }, h('div', {}, h('b', {}, '처음이라면: '), '① [예시] 작품을 열어 편집기·글자 수·버전을 써 보세요. ② “AI 작업실”에서 개고 제안을 만들고 한 줄씩 수락·거절해 보세요. ③ “AI로 새 작품”은 키워드만으로 구상부터 초고까지 만들어 줍니다. 모든 AI 결과는 새 버전이며 원본은 바뀌지 않습니다.'), h('button', { class: 'btn sm', onclick: async () => { S.onboarded = true; await S.storage.setMeta('onboarded', true); render(); } }, '알겠습니다')) : null,
       noBackup ? h('div', { class: 'banner' }, '아직 백업한 적이 없습니다. 원고는 이 브라우저에만 저장되어, 브라우저 데이터를 지우면 함께 사라집니다.', h('button', { class: 'btn sm', onclick: () => go('settings') }, '백업하러 가기')) : null,
       ...(recent.length ? [h('h2', { class: 'small muted', style: 'margin-bottom:8px;font-weight:500' }, '최근 작업'), h('div', { class: 'recent' }, recent.map((w) => h('div', { class: 'card', tabindex: 0, role: 'button', onclick: () => openWork(w.id), onkeydown: (e) => { if (e.key === 'Enter') openWork(w.id); } },
         h('div', { style: 'font-weight:600;margin-bottom:4px' }, w.title), h('div', { class: 'small muted' }, `${w.genre} · ${w.status}`), h('div', { class: 'small mono', style: 'margin-top:6px' }, `${fmt(w.counts.withSpaces)}자 · ${w.counts.sheets}매`), h('div', { class: 'small muted' }, '수정 ' + fmtDate(w.updatedAt)))))] : []),
@@ -935,7 +937,7 @@
       h('div', { class: 'top' }, h('div', { class: 'brand' }, '《소설 작업실》'), h('nav', { class: 'nav', id: 'nav', 'aria-label': '주 메뉴' }), h('div', { class: 'small muted', id: 'worktitle', style: 'font-weight:600' }), h('div', { class: 'spacer' }), h('div', { id: 'aistatus' }), h('div', { class: 'savestate', id: 'savestate', 'data-s': 'saved' })),
       h('div', { id: 'storagebanner' }), h('main', { id: 'main' }), h('div', { id: 'modals' }), h('div', { id: 'toasts', 'aria-live': 'polite' }));
     S.storage = await ST.createStorage();
-    try { Object.assign(S.prefs, (await S.storage.getMeta('prefs')) || {}); S.lastBackup = (await S.storage.getMeta('lastBackup')) || null; } catch (e) { /* 기본값 사용 */ }
+    try { Object.assign(S.prefs, (await S.storage.getMeta('prefs')) || {}); S.lastBackup = (await S.storage.getMeta('lastBackup')) || null; S.onboarded = !!(await S.storage.getMeta('onboarded')); } catch (e) { /* 기본값 사용 */ }
     applyPrefs();
     try { if (!(await S.storage.getMeta('seeded'))) { await seedSample(); await S.storage.setMeta('seeded', true); } } catch (e) { /* 예시 작품은 없어도 된다 */ }
     if (window.NSAIUI) { try { await window.NSAIUI.init(NSApp); } catch (e) { console.error('AI 화면 초기화 실패', e); } }

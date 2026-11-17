@@ -364,7 +364,7 @@
   function uiState() {
     if (U.ui.workId !== S.work.id) {
       const p = aiPrefs(), ai = !!S.work.aiGenerated; const auto = ai ? '적극형' : p.automation;
-      U.ui = { workId: S.work.id, rev: { level: AUTO_LEVEL[auto], automation: auto, loop: true, loopMax: p.loopMax, extra: '', scopeAll: true, scope: new Set(), base: S.ver.id }, one: { automation: auto, loop: true, loopMax: p.loopMax, base: S.ver.id }, conv: { dir: S.work.format === 'script' ? 'script2novel' : 'novel2script', format: SCRIPT_FORMATS[1], mode: MODES[0][0], minutes: 20, scenes: 12, chars: 0, title: '', base: S.ver.id }, judge: { base: S.ver.id, chance: false }, edits: { base: S.ver.id, passes: new Set(Object.keys(P.PASSES).filter((k) => P.PASSES[k].default)), maxEdits: 8, scopeAll: true, scope: new Set() }, proof: { base: S.ver.id } };
+      U.ui = { workId: S.work.id, rev: { level: AUTO_LEVEL[auto], automation: auto, loop: true, loopMax: p.loopMax, extra: '', scopeAll: true, scope: new Set(), base: S.ver.id }, one: { automation: auto, loop: true, loopMax: p.loopMax, base: S.ver.id }, conv: { dir: S.work.format === 'script' ? 'script2novel' : 'novel2script', format: SCRIPT_FORMATS[1], mode: MODES[0][0], minutes: 20, scenes: 12, chars: 0, title: '', base: S.ver.id, genre: '스릴러', keep: new Set(['인물', '핵심 사건', '결말', '배경']) }, judge: { base: S.ver.id, chance: false }, edits: { base: S.ver.id, passes: new Set(Object.keys(P.PASSES).filter((k) => P.PASSES[k].default)), maxEdits: 8, scopeAll: true, scope: new Set() }, proof: { base: S.ver.id }, period: { base: S.ver.id, era: (S.work.brief && S.work.brief.setting && [S.work.brief.setting.era, S.work.brief.setting.place].filter(Boolean).join(' / ')) || '' } };
     }
     return U.ui;
   }
@@ -374,7 +374,7 @@
     const jobsEl = h('div', { class: 'stack' }), slot = h('div', { 'data-jobslot': w.id }, U.job && U.job.workId === w.id ? jobPanel(U.job) : null);
     main.append(h('div', { class: 'page-head' }, h('h1', {}, 'AI 작업실'), h('div', { class: 'small muted' }, `${w.title} · 현재 버전 ${S.ver.label}${S.ver.frozen ? '(고정)' : ''}`)), availBanner(),
       h('div', { class: 'banner info' }, 'AI 작업은 모두 새 버전으로 저장되고 원본은 바뀌지 않습니다. 작업 직전에 기준 버전을 자동으로 고정합니다. 잠금한 단락은 바꾸지 않습니다.'), slot,
-      h('div', { class: 'cols', style: 'margin-top:12px;align-items:start' }, await editsCard(ui), await reviseCard(ui), await proofCard(ui), await oneclickCard(ui), await convertCard(ui), await judgeCard(ui)),
+      h('div', { class: 'cols', style: 'margin-top:12px;align-items:start' }, await editsCard(ui), await reviseCard(ui), await proofCard(ui), await oneclickCard(ui), await convertCard(ui), await judgeCard(ui), await periodCard(ui)),
       h('div', { class: 'card stack', style: 'margin-top:14px' }, h('h2', {}, '작업 목록'), jobsEl),
       h('p', { class: 'small muted' }, '장면별 AI 작업은 “집필 공간”의 [장면 AI 작업] 버튼에서 실행합니다. 결말 재구성은 [장면 AI 작업]의 “장면 재구성/전체 재작성”을 마지막 장면에 쓰세요.'));
     await drawJobs(jobsEl);
@@ -440,30 +440,33 @@
     const V = ui.conv, base = h('select', { 'aria-label': '원작 버전', onchange: (e) => { V.base = e.target.value; } }, await versionOptions(V.base)); syncSel(base, V, 'base');
     const box = h('div', { class: 'stack' });
     const draw = () => {
-      const n2s = V.dir === 'novel2script';
+      const n2s = V.dir === 'novel2script', gen = V.dir === 'genre';
       box.replaceChildren(
+        gen ? h('label', { class: 'fld' }, '목표 장르', h('select', { 'aria-label': '목표 장르', onchange: (e) => { V.genre = e.target.value; } }, Object.keys(P.GENRE_CONVENTIONS).map((g) => h('option', { value: g, selected: V.genre === g }, g)))) : null,
+        gen ? h('div', {}, h('div', { class: 'small muted', style: 'margin-bottom:4px' }, '유지할 요소 (체크하지 않은 요소는 목표 장르에 맞게 바뀔 수 있습니다)'), h('div', { class: 'btn-row' }, ['인물', '핵심 사건', '결말', '배경', '시점', '문체'].map((k) => h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: V.keep.has(k), onchange: (e) => { e.target.checked ? V.keep.add(k) : V.keep.delete(k); } }), k)))) : null,
         n2s ? h('label', { class: 'fld' }, '시나리오 형식', h('select', { 'aria-label': '시나리오 형식', onchange: (e) => { V.format = e.target.value; } }, SCRIPT_FORMATS.map((f) => h('option', { value: f, selected: V.format === f }, f)))) : null,
-        n2s ? h('div', { class: 'grid2' }, h('label', { class: 'fld' }, '목표 러닝타임(분)', h('input', { type: 'number', min: 1, value: V.minutes, 'aria-label': '러닝타임', onchange: (e) => { V.minutes = Math.max(1, +e.target.value || 20); } })), h('label', { class: 'fld' }, '목표 장면 수', h('input', { type: 'number', min: 1, value: V.scenes, 'aria-label': '장면 수', onchange: (e) => { V.scenes = Math.max(1, +e.target.value || 10); } }))) : h('label', { class: 'fld' }, '목표 분량(글자, 0이면 원작에 맞춤)', h('input', { type: 'number', min: 0, value: V.chars, 'aria-label': '목표 글자 수', onchange: (e) => { V.chars = Math.max(0, +e.target.value || 0); } })),
+        gen ? null : n2s ? h('div', { class: 'grid2' }, h('label', { class: 'fld' }, '목표 러닝타임(분)', h('input', { type: 'number', min: 1, value: V.minutes, 'aria-label': '러닝타임', onchange: (e) => { V.minutes = Math.max(1, +e.target.value || 20); } })), h('label', { class: 'fld' }, '목표 장면 수', h('input', { type: 'number', min: 1, value: V.scenes, 'aria-label': '장면 수', onchange: (e) => { V.scenes = Math.max(1, +e.target.value || 10); } }))) : h('label', { class: 'fld' }, '목표 분량(글자, 0이면 원작에 맞춤)', h('input', { type: 'number', min: 0, value: V.chars, 'aria-label': '목표 글자 수', onchange: (e) => { V.chars = Math.max(0, +e.target.value || 0); } })),
         h('div', { class: 'stack', style: 'gap:4px' }, h('div', { class: 'small muted' }, '변환 방식'), ...MODES.map(([k, d]) => h('label', { class: 'chk' }, h('input', { type: 'radio', name: 'convmode', checked: V.mode === k, onchange: () => { V.mode = k; } }), h('span', {}, h('b', {}, k), h('span', { class: 'small muted' }, ' — ' + d))))));
     };
     draw();
     const dirRad = (v, t) => h('label', { class: 'chk' }, h('input', { type: 'radio', name: 'convdir', checked: V.dir === v, onchange: () => { V.dir = v; draw(); } }), t);
     const title = h('input', { type: 'text', 'aria-label': '새 작품 이름', placeholder: `${S.work.title} — ${V.dir === 'novel2script' ? '시나리오' : '소설'}` }); title.value = V.title; title.addEventListener('input', () => { V.title = title.value; });
-    return h('div', { class: 'card stack' }, h('h2', {}, '시나리오 ↔ 소설 변환'),
+    return h('div', { class: 'card stack' }, h('h2', {}, '시나리오 ↔ 소설 · 장르 전환'),
       h('div', { class: 'small muted' }, '원작은 그대로 두고 새 작품(파생)으로 저장합니다. 원작과 변환본의 장면 대응표와, 핵심 사건·인물 관계를 바꾼 곳의 표시가 보고서에 나옵니다.'),
-      h('div', { class: 'btn-row' }, dirRad('novel2script', '소설 → 시나리오'), dirRad('script2novel', '시나리오 → 소설')),
+      h('div', { class: 'btn-row' }, dirRad('novel2script', '소설 → 시나리오'), dirRad('script2novel', '시나리오 → 소설'), dirRad('genre', '장르 전환')),
       h('label', { class: 'fld' }, '원작 버전', base), box, h('label', { class: 'fld' }, '새 작품 이름 (비우면 자동)', title),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', disabled: U.running, onclick: runConvert }, '변환 시작')));
   }
   async function runConvert() {
     const ui = uiState(), V = ui.conv, w = S.work; if (U.running) return;
     const base = await ensureFrozen(V.base || S.ver.id);
-    const n2s = V.dir === 'novel2script', srcChars = C.countWithSpaces(C.versionText(base));
-    const nw = N.defaultWork({ title: V.title.trim() || `${w.title} — ${n2s ? '시나리오' : '소설'}`, genre: '기타', status: '초고', format: n2s ? 'script' : 'novel', derivedFrom: { workId: w.id, versionId: base.id, kind: V.dir, title: w.title }, brief: w.brief, styleGuide: w.styleGuide, styleFingerprint: w.styleFingerprint, aiGenerated: true, memo: `「${w.title}」(${base.label})에서 AI로 변환한 작품입니다.` });
-    const params = { direction: V.dir, baseVersionId: base.id, format: n2s ? V.format : '', modeText: `${V.mode} — ${MODES.find((m) => m[0] === V.mode)[1]}`, target: n2s ? { minutes: V.minutes, scenes: V.scenes } : { chars: V.chars || Math.round(srcChars * 2.5) }, newWork: nw };
+    const n2s = V.dir === 'novel2script', gen = V.dir === 'genre', srcChars = C.countWithSpaces(C.versionText(base));
+    const nw = N.defaultWork({ title: V.title.trim() || `${w.title} — ${n2s ? '시나리오' : gen ? V.genre : '소설'}`, genre: '기타', status: '초고', format: n2s ? 'script' : 'novel', derivedFrom: { workId: w.id, versionId: base.id, kind: V.dir, title: w.title }, brief: w.brief, styleGuide: w.styleGuide, styleFingerprint: w.styleFingerprint, aiGenerated: true, memo: `「${w.title}」(${base.label})에서 AI로 변환한 작품입니다.` });
+    const params = { direction: V.dir, targetGenre: gen ? V.genre : '', keep: gen ? [...V.keep] : [], baseVersionId: base.id, format: n2s ? V.format : '', modeText: `${V.mode} — ${MODES.find((m) => m[0] === V.mode)[1]}`, target: n2s ? { minutes: V.minutes, scenes: V.scenes } : { chars: V.chars || Math.round(srcChars * 2.5) }, newWork: nw };
     const chunks = A.convertChunks(base, Math.round(cfgFromPrefs().chunkChars * 1.3)).length;
+    if (gen && !V.keep.size) { toast('유지할 요소를 하나 이상 고르세요.', 'err'); return; }
     const job = A.buildJob('convert', w, params, { chunks }); job.params.chapterChars = chapterChars(base);
-    await launch(job, { title: n2s ? '소설 → 시나리오' : '시나리오 → 소설', target: `원작 “${base.label}” (${fmt(srcChars)}자) → ${nw.title}`, notes: ['변환 결과는 새 작품으로 저장되고 원작은 바뀌지 않습니다. 핵심 사건이나 인물 관계를 바꾼 곳은 보고서에 따로 표시됩니다.'] });
+    await launch(job, { title: n2s ? '소설 → 시나리오' : gen ? `장르 전환 → ${V.genre}` : '시나리오 → 소설', target: `원작 “${base.label}” (${fmt(srcChars)}자) → ${nw.title}`, notes: ['변환 결과는 새 작품으로 저장되고 원작은 바뀌지 않습니다. 핵심 사건이나 인물 관계를 바꾼 곳은 보고서에 따로 표시됩니다.'] });
     await N.loadWorks(); if (S.view === 'ai') N.render();
   }
 
@@ -531,6 +534,8 @@
       if ((r.coreChanges || []).length) body.push(sec('핵심 사건·인물 관계를 바꾼 곳', h('ul', { style: 'margin:0;padding-left:18px' }, r.coreChanges.map((c) => h('li', {}, `${c.target} ← ${c.source}: ${c.note || '변경'}`)))));
       if ((r.sceneMap || []).length) body.push(sec('원작 ↔ 변환본 장면 대응표', h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl', style: 'min-width:0' }, h('thead', {}, h('tr', {}, ['변환본', '원작', '관계', '비고'].map((t) => h('th', {}, t)))), h('tbody', {}, r.sceneMap.map((s) => h('tr', {}, h('td', {}, s.target), h('td', {}, s.source), h('td', {}, h('span', { class: 'pill ' + (s.relation === '유지' ? '' : s.relation === '신규' ? 'accent' : 'warn') }, s.relation), s.coreChange ? h('span', { class: 'pill warn', style: 'margin-left:4px' }, '핵심 변경') : null), h('td', {}, s.note))))))));
     }
+    if (job.type === 'period' && r.period) body.push(periodReportEl(r.period));
+    if (job.type === 'continuity' && r.continuity) reviseSections(job, body);
     if (job.type === 'judge' && r.judge) body.push(judgeEl(r.judge, { chance: job.params.chance }));
     modal({ title: `결과 보고서 — ${A.TYPE_LABEL[job.type] || job.type}`, wide: true, body: h('div', { class: 'stack' }, body),
       actions: (close) => [job.resultVersionId && job.params.baseVersionId && job.type !== 'convert' ? h('button', { class: 'btn', onclick: () => { close(); S.cmpA = job.params.baseVersionId; S.cmpB = job.resultVersionId; N.go('compare'); } }, '원본과 비교') : null, job.resultVersionId ? h('button', { class: 'btn', onclick: () => { close(); openResult(job); } }, '결과 버전 열기') : null, h('button', { class: 'btn primary', onclick: () => close() }, '닫기')] });
@@ -748,10 +753,162 @@
     draw();
   }
 
+  /* ───────────── 고증 점검 ───────────── */
+  async function readVersion(id) { await N.flushAndSave(); return S.ver && S.ver.id === id ? S.ver : N.storage.getVersion(id); }
+  async function periodCard(ui) {
+    const Pd = ui.period, base = h('select', { 'aria-label': '기준 버전(고증)', onchange: (e) => { Pd.base = e.target.value; } }, await versionOptions(Pd.base)); syncSel(base, Pd, 'base');
+    const era = h('input', { type: 'text', value: Pd.era, 'aria-label': '시대·장소', placeholder: '예: 1980년대 서울 시장 / 조선 후기 한양', oninput: (e) => { Pd.era = e.target.value; } });
+    return h('div', { class: 'card stack' }, h('h2', {}, '역사·자료 고증 점검'),
+      h('div', { class: 'small muted' }, '시대착오 가능성, 제도·관직·화폐·생활·말투 등을 점검해 네 가지로 나눕니다: 확인됨 / 추정 / 미확인 / 시대착오 가능성.'),
+      h('div', { class: 'banner danger' }, '웹 검색을 쓰지 않고 출처를 확인하지 못합니다. AI가 아는 범위의 의견일 뿐이므로, “확인됨”도 사료로 검증된 것이 아닙니다. 응모·출간 전에는 공식 사료와 학술 자료로 직접 확인하세요.'),
+      h('label', { class: 'fld' }, '기준 버전', base), h('label', { class: 'fld' }, '작품의 시대·장소', era),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', disabled: U.running, onclick: runPeriod }, '고증 점검 시작')));
+  }
+  async function runPeriod() {
+    const ui = uiState(), Pd = ui.period; if (U.running) return;
+    const base = await readVersion(Pd.base || S.ver.id); if (!base.frozen && S.ver.id === base.id) { /* 읽기 전용 작업이라 고정하지 않는다 */ }
+    const job = A.buildJob('period', S.work, { baseVersionId: base.id, era: Pd.era, chapterChars: chapterChars(base) }, { chapterCount: base.chapters.length });
+    const done = await launch(job, { title: '고증 점검', target: `“${base.label}” · ${base.chapters.length}개 장`, notes: ['이 작업은 원고를 바꾸지 않습니다. 결과는 보고서로만 나옵니다.', '웹 검색을 쓰지 않으므로 출처를 확인하지 못합니다.'] });
+    if (done && (done.status === 'done' || done.status === 'partial')) showReport(done);
+    if (S.view === 'ai') N.render();
+  }
+  const PERIOD_CATS = [['시대착오', '시대착오 가능성', 'var(--del-bg)'], ['미확인', '아직 확인되지 않음', 'var(--warn-bg)'], ['추정', '정황으로 추정', 'var(--surface-2)'], ['확인됨', '널리 알려진 사실(출처 미확인)', 'var(--ins-bg)']];
+  function periodReportEl(rep) {
+    return h('div', { class: 'stack' }, h('div', { class: 'banner danger' }, '웹 검색 없이 AI가 아는 범위에서 낸 의견입니다. 출처를 확인하지 못했습니다. 중요한 사실은 반드시 공식 자료로 확인하세요.'),
+      rep.dropped ? h('div', { class: 'small muted' }, `원고에 없는 인용이어서 버린 항목 ${rep.dropped}개`) : null,
+      ...PERIOD_CATS.map(([k, label, bg]) => { const items = rep.items.filter((i) => i.category === k); return h('div', { class: 'card stack', style: 'gap:6px' }, h('h2', {}, `${label} (${items.length})`), ...(items.length ? items.map((i) => h('div', { class: 'row', style: `background:${bg}` }, h('div', { class: 'grow' }, h('div', { class: 'small muted' }, `${i.chapter}장`), h('div', { class: 'ctx' }, '“' + i.quote + '”'), i.claim ? h('div', { class: 'small' }, '전제: ' + i.claim) : null, i.basis ? h('div', { class: 'small muted' }, '근거: ' + i.basis) : null, i.suggestion ? h('div', { class: 'small' }, '제안: ' + i.suggestion) : null))) : [h('div', { class: 'muted' }, '없습니다.')])); }));
+  }
+
+  /* ───────────── 인물·설정·연속성 ───────────── */
+  const locate = (ver, ci, quote) => { const ch = ver.chapters[ci]; if (!ch) return null; for (let pi = 0; pi < ch.paragraphs.length; pi++) { const at = ch.paragraphs[pi].text.indexOf(quote); if (at >= 0) return { ci, pi, start: at, end: at + quote.length }; } return null; };
+  async function renderBible(main) {
+    await N.flushAndSave(); const w = S.work; w.bible = w.bible || {}; const b = w.bible;
+    const persist = (() => { let t; return () => { clearTimeout(t); t = setTimeout(() => N.updateWork(w.id, () => {}), 500); }; })();
+    const chars = () => (b.design && b.design.characters) || (b.extractedCharacters = b.extractedCharacters || []);
+    const field = (obj, k, label, ph) => { const el = h('input', { type: 'text', 'aria-label': label, placeholder: ph || label }); el.value = obj[k] || ''; el.addEventListener('input', () => { obj[k] = el.value; persist(); }); return el; };
+    const charsEl = h('div', { class: 'stack' }), factsEl = h('div', { class: 'stack' }), sumEl = h('div', { class: 'stack' }), contEl = h('div', { class: 'stack' });
+    const drawChars = () => charsEl.replaceChildren(...chars().map((c, i) => h('div', { class: 'card stack', style: 'gap:6px;padding:10px' },
+      h('div', { class: 'grid2' }, field(c, 'name', `인물 ${i + 1} 이름`, '이름'), field(c, 'age', `인물 ${i + 1} 나이`, '나이')),
+      h('div', { class: 'grid2' }, field(c, c.role !== undefined ? 'role' : 'traits', `인물 ${i + 1} 역할·특징`, '역할·특징'), field(c, 'desire', `인물 ${i + 1} 욕망·목표`, '욕망·목표')),
+      h('div', { class: 'grid2' }, field(c, 'speech', `인물 ${i + 1} 말투`, '말투'), field(c, 'secret', `인물 ${i + 1} 과거·비밀`, '과거·비밀')),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn sm danger', onclick: () => { chars().splice(i, 1); persist(); drawChars(); } }, '삭제')))).concat([h('button', { class: 'btn', onclick: () => { chars().push({ name: '', age: '', role: '', desire: '', speech: '', secret: '' }); persist(); drawChars(); } }, '인물 추가')]));
+    const KINDS_F = ['나이', '관계', '직업', '날짜', '장소', '소유', '사건', '기타'];
+    const drawFacts = () => { b.facts = b.facts || []; factsEl.replaceChildren(...b.facts.map((f, i) => h('div', { class: 'row' }, h('select', { 'aria-label': '사실 종류', style: 'width:auto', onchange: (e) => { f.kind = e.target.value; persist(); } }, KINDS_F.map((k) => h('option', { value: k, selected: f.kind === k }, k))), h('div', { class: 'grow' }, field(f, 'fact', `사실 ${i + 1}`, '확정된 사실')), h('span', { class: 'small muted' }, f.chapter ? `${f.chapter}장` : ''), h('button', { class: 'btn sm danger', onclick: () => { b.facts.splice(i, 1); persist(); drawFacts(); } }, '삭제'))).concat([h('button', { class: 'btn', onclick: () => { b.facts.push({ fact: '', kind: '기타', chapter: 0 }); persist(); drawFacts(); } }, '사실 추가')])); };
+    const drawSum = () => { b.chapterSummaries = b.chapterSummaries || []; sumEl.replaceChildren(...S.ver.chapters.map((c, i) => { const el = h('textarea', { class: 'field', rows: 2, 'aria-label': `${i + 1}장 요약` }); el.value = b.chapterSummaries[i] || ''; el.addEventListener('input', () => { b.chapterSummaries[i] = el.value; persist(); }); return h('label', { class: 'fld' }, `${i + 1}장 ${c.title || ''}`, el); })); };
+    const drawCont = async () => {
+      const jobs = (await N.storage.listJobs(w.id)).filter((j) => j.type === 'continuity').sort((a, c) => c.createdAt.localeCompare(a.createdAt)); const j = jobs[0];
+      const conf = j && j.report && j.report.continuity ? j.report.continuity.confirm : [];
+      if (!j) { contEl.replaceChildren(h('div', { class: 'muted' }, '아직 연속성 점검을 하지 않았습니다.')); return; }
+      contEl.replaceChildren(h('div', { class: 'small muted' }, `${fmtDate(j.createdAt)} · ${STATUS_TXT[j.status]} · 확인이 필요한 곳 ${conf.length}곳. 의도된 거짓말·기억의 왜곡·인물의 착오일 수 있어 자동으로 고치지 않았습니다.`),
+        ...(conf.length ? conf.map((c) => h('div', { class: 'row', style: c.status === 'ok' ? 'opacity:.5' : '' }, h('div', { class: 'grow' }, h('div', { class: 'small muted' }, `${c.chapter}장 · ${c.kind} · ${c.severity}` + (c.maybeIntentional ? ' · 의도일 수 있음' : '')), h('div', { class: 'ctx' }, '“' + c.quote + '”'), c.established ? h('div', { class: 'small' }, '확정된 사실: ' + c.established) : null, h('div', { class: 'small' }, c.problem), c.question ? h('div', { class: 'small muted' }, '작가 확인: ' + c.question) : null),
+          h('div', { class: 'btn-row', style: 'flex-wrap:nowrap' }, h('button', { class: 'btn sm', onclick: async () => { const loc = locate(S.ver, c.chapter - 1, c.quote); if (loc) N.jumpTo(loc.ci, loc.pi, loc.start, loc.end); else toast('현재 버전에서 그 문장을 찾지 못했습니다.', 'err'); } }, '원고에서 보기'), h('button', { class: 'btn sm', onclick: async () => { c.status = c.status === 'ok' ? '' : 'ok'; await N.storage.putJob(j); drawCont(); } }, c.status === 'ok' ? '다시 보기' : '문제 없음')))) : [h('div', { class: 'muted' }, '확인이 필요한 충돌이 없습니다.')]));
+    };
+    main.append(h('div', { class: 'page-head' }, h('h1', {}, '인물·설정·연속성'), h('div', { class: 'small muted' }, `${w.title} · ${S.ver.label}`)), availBanner(), h('div', { 'data-jobslot': w.id }, U.job && U.job.workId === w.id ? jobPanel(U.job) : null),
+      h('div', { class: 'card stack', style: 'margin-bottom:14px' }, h('h2', {}, 'AI로 점검'),
+        h('div', { class: 'small muted' }, '이 작업들은 원고를 바꾸지 않습니다. “설정 추출”은 원고에서 인물·사실·장별 요약을 뽑아 아래 설정집을 채우고, “연속성 점검”은 설정집과 원고가 충돌하는 곳을 찾아 작가에게 확인할 질문으로 남깁니다.'),
+        h('div', { class: 'btn-row' }, h('button', { class: 'btn', disabled: U.running, onclick: () => runBibleJob('analyze') }, '원고에서 설정 추출'), h('button', { class: 'btn primary', disabled: U.running, onclick: () => runBibleJob('continuity') }, '연속성 점검'))),
+      h('div', { class: 'cols', style: 'align-items:start' }, h('div', { class: 'card stack' }, h('h2', {}, '등장인물'), charsEl), h('div', { class: 'card stack' }, h('h2', {}, '작품 속에서 확정된 사실'), factsEl)),
+      h('div', { class: 'card stack', style: 'margin-top:14px' }, h('h2', {}, '장별 요약'), sumEl), h('div', { class: 'card stack', style: 'margin-top:14px' }, h('h2', {}, '연속성 점검 결과'), contEl));
+    drawChars(); drawFacts(); drawSum(); await drawCont();
+  }
+  async function runBibleJob(type) {
+    if (U.running) return; await N.flushAndSave(); const w = S.work, ver = S.ver;
+    const facts = (w.bible && w.bible.facts || []).length;
+    const params = { baseVersionId: ver.id, noFix: true, analyzeFirst: type === 'continuity' && !facts, chapterChars: chapterChars(ver) };
+    const job = A.buildJob(type, w, params, { chapterCount: ver.chapters.length });
+    const done = await launch(job, { title: type === 'analyze' ? '설정 추출' : '연속성 점검', target: `현재 버전 “${ver.label}” · ${ver.chapters.length}개 장`, notes: ['이 작업은 원고를 바꾸지 않습니다.', type === 'analyze' ? '추출한 내용은 설정집에 채워지며, 이미 있는 인물·사실은 덮어쓰지 않고 보태기만 합니다.' : (params.analyzeFirst ? '설정집에 확정된 사실이 없어 먼저 설정을 추출한 뒤 점검합니다.' : '설정집의 확정된 사실과 원고를 비교합니다.')] });
+    if (done && S.view === 'bible') N.render();
+  }
+
+  /* ───────────── 공모전 관리 ───────────── */
+  const contests = () => (S.prefs.contests = S.prefs.contests || []);
+  const AI_RULES = ['미확인', '금지', '신고 필요', '허용'];
+  const UNITS = [['chars_with', '글자 수(공백 포함)'], ['chars_without', '글자 수(공백 제외)'], ['sheets_simple', '원고지(단순 환산, 200자)'], ['sheets_grid', '원고지(모사)']];
+  const dday = (d) => { if (!d) return null; const d0 = new Date(d + 'T00:00:00'); if (isNaN(d0)) return null; const n = new Date(); return Math.round((d0 - new Date(n.getFullYear(), n.getMonth(), n.getDate())) / 86400000); };
+  function measure(ver, work, unit) { const t = C.countText(C.versionText(ver), work && work.sheet); return { chars_with: t.withSpaces, chars_without: t.noSpaces, sheets_simple: t.simple.withSpaces, sheets_grid: t.grid.sheets }[unit]; }
+  function contestDialog(c0) {
+    const c = Object.assign({ id: C.uid('ct'), name: '', section: '', unit: 'sheets_simple', min: '', max: '', method: '', deadline: '', resultDate: '', note: '', aiRule: '미확인', url: '', contact: '', subs: [] }, c0 || {});
+    const inp = (k, label, type) => { const el = h('input', { type: type || 'text', 'aria-label': label }); el.value = c[k] == null ? '' : c[k]; el.addEventListener('input', () => { c[k] = el.value; }); return h('label', { class: 'fld' }, label, el); };
+    modal({ title: c0 ? '공모전 수정' : '공모전 추가', wide: true, noBgClose: true, body: [h('div', { class: 'banner' }, '모집 요강은 반드시 해당 기관의 공식 공고에서 확인해 직접 입력하세요. 이 앱은 요강을 찾아보거나 확인하지 않습니다.'),
+      h('div', { class: 'grid2' }, inp('name', '신문사·문학상 이름'), inp('section', '모집 부문')),
+      h('div', { class: 'grid2' }, h('label', { class: 'fld' }, '분량 기준 단위', h('select', { 'aria-label': '분량 단위', onchange: (e) => { c.unit = e.target.value; } }, UNITS.map(([v, t]) => h('option', { value: v, selected: c.unit === v }, t)))), h('label', { class: 'fld' }, 'AI 사용 규정', h('select', { 'aria-label': 'AI 사용 규정', onchange: (e) => { c.aiRule = e.target.value; } }, AI_RULES.map((v) => h('option', { value: v, selected: c.aiRule === v }, v + (v === '미확인' ? ' (공식 공고 확인 전)' : '')))))),
+      h('div', { class: 'grid2' }, inp('min', '분량 하한(숫자, 선택)', 'number'), inp('max', '분량 상한(숫자, 선택)', 'number')),
+      h('div', { class: 'grid2' }, inp('deadline', '마감일', 'date'), inp('resultDate', '결과 발표일', 'date')), inp('method', '원고 제출 방식'), inp('url', '공식 공고 주소(메모용)'), inp('contact', '표지에 쓸 연락처(응모 파일 표지용)'), h('label', { class: 'fld' }, '심사 기준·특이사항', (() => { const el = h('textarea', { class: 'field', rows: 3, 'aria-label': '특이사항' }); el.value = c.note; el.addEventListener('input', () => { c.note = el.value; }); return el; })())],
+      actions: (close) => [h('button', { class: 'btn', onclick: () => close() }, '취소'), h('button', { class: 'btn primary', onclick: () => { if (!c.name.trim()) { toast('이름을 입력하세요.', 'err'); return; } const l = contests(); const i = l.findIndex((x) => x.id === c.id); if (i >= 0) l[i] = c; else l.push(c); savePrefs(); close(); N.render(); } }, '저장')] });
+  }
+  async function renderContests(main) {
+    const list = contests().slice().sort((a, b) => (a.deadline || '9999').localeCompare(b.deadline || '9999'));
+    main.append(h('div', { class: 'page-head' }, h('h1', {}, '공모전 관리'), h('button', { class: 'btn primary', onclick: () => contestDialog() }, '공모전 추가')),
+      h('div', { class: 'banner' }, '이 화면의 요강·마감·규정은 모두 작가가 직접 입력한 것입니다. 앱이 공식 공고를 확인하지 않으므로 응모 전에 반드시 기관의 공식 공고를 확인하세요. AI 사용 규정이 “미확인”이면 아직 확인하지 않았다는 뜻입니다.'));
+    if (!list.length) main.append(h('div', { class: 'card empty' }, '등록한 공모전이 없습니다. “공모전 추가”로 시작하세요.'));
+    for (const c of list) main.append(await contestCard(c));
+    main.append(fitCard());
+  }
+  async function contestCard(c) {
+    const dd = dday(c.deadline), subs = c.subs || [];
+    const rows = [];
+    for (const s of subs) {
+      const w = await N.storage.getWork(s.workId), v = w ? await N.storage.getVersion(s.versionId) : null;
+      if (!w || !v) { rows.push(h('tr', {}, h('td', { colspan: 7 }, '(작품 또는 버전이 삭제되었습니다)'), h('td', {}, h('button', { class: 'btn sm danger', onclick: () => { c.subs = subs.filter((x) => x !== s); savePrefs(); N.render(); } }, '목록에서 제거')))); continue; }
+      const val = measure(v, w, c.unit), min = c.min !== '' && c.min != null ? +c.min : null, max = c.max !== '' && c.max != null ? +c.max : null;
+      const lenOk = (min == null || val >= min) && (max == null || val <= max), lenKnown = min != null || max != null;
+      const share = C.aiShare(v), priv = C.privacyScan(v, [w.penName, w.realName].filter(Boolean)).length;
+      const aiWarn = share > 0 && c.aiRule !== '허용';
+      rows.push(h('tr', {}, h('td', {}, w.title), h('td', {}, h('span', { class: 'pill' }, v.label), v.kind === '제출본' ? h('span', { class: 'pill accent', style: 'margin-left:4px' }, '제출본 잠금') : null),
+        h('td', { class: 'num' }, fmt(val) + (c.unit.startsWith('sheets') ? '매' : '자')), h('td', { style: lenKnown ? (lenOk ? 'color:var(--ok)' : 'color:var(--danger);font-weight:600') : '' }, lenKnown ? (lenOk ? '분량 적합' : (min != null && val < min ? '분량 미달' : '분량 초과')) : '기준 미입력'),
+        h('td', { style: aiWarn ? 'color:var(--warn-fg);font-weight:600' : '' }, `AI ${Math.round(share * 100)}%` + (aiWarn ? (c.aiRule === '미확인' ? ' · 공식 요강의 AI 규정을 먼저 확인' : ` · 규정이 “${c.aiRule}”`) : '')),
+        h('td', { style: priv ? 'color:var(--danger)' : '' }, priv ? `신상 정보 의심 ${priv}곳` : '신상 정보 없음'),
+        h('td', {}, s.submittedAt ? h('span', { class: 'pill accent' }, '제출함 ' + s.submittedAt.slice(0, 10)) : h('span', { class: 'pill' }, '미제출')),
+        h('td', {}, h('div', { class: 'btn-row', style: 'flex-wrap:nowrap' },
+          v.kind !== '제출본' ? h('button', { class: 'btn sm', onclick: () => lockSubmission(c, s, w, v) }, '제출본으로 잠금') : null,
+          h('button', { class: 'btn sm', onclick: () => exportSubmission(c, w, v) }, '응모 파일 내보내기'),
+          h('button', { class: 'btn sm', onclick: () => { s.submittedAt = s.submittedAt ? '' : C.nowIso(); savePrefs(); N.render(); } }, s.submittedAt ? '제출 취소' : '제출함 표시'),
+          h('button', { class: 'btn sm danger', onclick: () => { c.subs = subs.filter((x) => x !== s); savePrefs(); N.render(); } }, '제거')))));
+    }
+    return h('div', { class: 'card stack', style: 'margin-top:12px' },
+      h('div', { class: 'btn-row', style: 'justify-content:space-between' }, h('div', {}, h('b', { style: 'font-size:15px' }, c.name), h('span', { class: 'muted', style: 'margin-left:8px' }, c.section)), h('div', { class: 'btn-row' }, dd != null ? h('span', { class: 'pill ' + (dd < 0 ? '' : dd <= 14 ? 'warn' : 'accent') }, dd < 0 ? `마감 ${-dd}일 지남` : dd === 0 ? '오늘 마감' : `D-${dd}`) : h('span', { class: 'pill' }, '마감일 미입력'), h('span', { class: 'pill ' + (c.aiRule === '허용' ? 'accent' : 'warn') }, 'AI 규정: ' + c.aiRule), h('button', { class: 'btn sm', onclick: () => contestDialog(c) }, '수정'), h('button', { class: 'btn sm danger', onclick: async () => { if (await askConfirm({ title: '공모전 삭제', message: `“${c.name}”과(와) 응모 기록을 목록에서 지웁니다. 작품과 버전은 지워지지 않습니다.`, confirmText: '삭제', danger: true })) { S.prefs.contests = contests().filter((x) => x.id !== c.id); savePrefs(); N.render(); } } }, '삭제'))),
+      h('div', { class: 'small muted' }, [c.min !== '' || c.max !== '' ? `분량 ${c.min || '-'} ~ ${c.max || '-'} (${UNITS.find((u) => u[0] === c.unit)[1]})` : '분량 기준 미입력', c.method && '제출: ' + c.method, c.resultDate && '결과 발표 ' + c.resultDate, c.url].filter(Boolean).join(' · ')),
+      c.note ? h('div', { class: 'small' }, c.note) : null,
+      subs.length ? h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl', style: 'min-width:900px' }, h('thead', {}, h('tr', {}, ['작품', '버전', '분량', '분량 판정', 'AI 기여도', '신상 정보', '제출', ''].map((t) => h('th', {}, t)))), h('tbody', {}, rows))) : h('div', { class: 'muted' }, '응모 작품이 없습니다.'),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn', onclick: () => addSubmission(c) }, '응모 작품 추가')));
+  }
+  async function addSubmission(c) {
+    const works = await N.storage.listWorks(); if (!works.length) { toast('작품이 없습니다.', 'err'); return; }
+    const wsel = h('select', { 'aria-label': '작품' }, works.map((w) => h('option', { value: w.id, selected: S.work && S.work.id === w.id }, w.title))), vsel = h('select', { 'aria-label': '버전' });
+    const fill = async () => { const ms = (await N.storage.listVersionMeta(wsel.value)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); vsel.replaceChildren(...ms.map((m) => h('option', { value: m.id }, `${m.label}${m.frozen ? '' : ' (작업 중)'} · AI ${Math.round((m.aiChars || 0) * 100)}%`))); }; wsel.addEventListener('change', fill); await fill();
+    modal({ title: '응모 작품 추가', body: [h('label', { class: 'fld' }, '작품', wsel), h('label', { class: 'fld' }, '버전', vsel), h('div', { class: 'small muted' }, '응모할 버전은 나중에 “제출본으로 잠금”으로 복사·고정해 두세요.')], actions: (close) => [h('button', { class: 'btn', onclick: () => close() }, '취소'), h('button', { class: 'btn primary', onclick: () => { if (!vsel.value) return; c.subs = (c.subs || []).concat([{ workId: wsel.value, versionId: vsel.value, submittedAt: '' }]); savePrefs(); close(); N.render(); } }, '추가')] });
+  }
+  async function lockSubmission(c, s, w, v) {
+    const copy = C.makeVersion({ workId: w.id, parentId: v.id, label: `제출본 · ${c.name}`, kind: '제출본', frozen: true, note: `${fmtDate(C.nowIso())}에 응모용으로 잠금(복사)`, chapters: C.cloneChapters(v.chapters) });
+    const t = C.aggregateCounts(copy.chapters.map((x) => C.countText(C.chapterText(x), w.sheet)), w.sheet); copy.stats = { withSpaces: t.withSpaces, noSpaces: t.noSpaces, sheets: t.sheets };
+    await N.storage.putVersion(copy); s.versionId = copy.id; savePrefs(); toast('제출본으로 고정했습니다. 이 버전은 더 이상 바뀌지 않습니다.'); N.render();
+  }
+  async function exportSubmission(c, w, v) {
+    const body = C.toTxt(v, { workTitle: '', chapterTitles: true });
+    const cover = [`제목: ${w.title}`, `부문: ${c.section || ''}`, `필명: ${w.penName || '(필명 미입력)'}`, `본명: ${w.realName || '(본명 미입력)'}`, `연락처: ${c.contact || '(연락처 미입력)'}`, '', `공모전: ${c.name}`].join('\n') + '\n';
+    const safe = (x) => x.replace(/[\\/:*?"<>|]/g, '_');
+    await N.saveFile(`${safe(w.title)}_본문(제목·이름 없음).txt`, body, 'text/plain'); await N.saveFile(`${safe(w.title)}_표지.txt`, cover, 'text/plain');
+  }
+  function fitCard() {
+    const out = h('div', { class: 'stack' });
+    return h('div', { class: 'card stack', style: 'margin-top:14px' }, h('h2', {}, '어느 공모전에 맞을까 (AI 검토)'),
+      h('div', { class: 'small muted' }, '작품의 최근 심사 요약과 위에 입력한 공모전 정보만 근거로 검토합니다. 입력하지 않은 요강은 “확인 필요”로 남기고 추측하지 않으며, 작품의 본질을 바꿔 가며 취향에 맞추라고 권하지 않습니다.'),
+      S.work ? h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', disabled: U.running, onclick: async (e) => { e.target.disabled = true; out.replaceChildren(h('div', { class: 'muted' }, '검토 중…')); try { out.replaceChildren(textOf(await fitRun())); } catch (err) { out.replaceChildren(h('div', { class: 'banner danger' }, '검토하지 못했습니다: ' + (err.message || err.code))); } e.target.disabled = false; } }, `“${S.work.title}” 적합도 검토`)) : h('div', { class: 'muted' }, '작품을 먼저 여세요(작품 보관함).'), out);
+  }
+  async function fitRun() {
+    const sample = await getSample(); if (!sample) throw new Error('이 환경에서는 AI를 쓸 수 없습니다.'); const w = S.work; const list = contests(); if (!list.length) throw new Error('공모전을 먼저 등록하세요.');
+    const r = (w.reviews || []).slice(-1)[0];
+    const summary = r ? `등급 ${r.verdict.grade}(${r.verdict.label}), 평균 ${r.verdict.avg}. 장점: ${r.report.strengths} / 치명적 약점: ${r.report.fatalWeakness} / 불리한 요소: ${r.report.disadvantages}` : '(아직 심사위원 진단을 하지 않았습니다. 작품 정보만으로 검토합니다.)';
+    const info = `제목: ${w.title}\n장르: ${w.genre}\n분량: 공백 포함 ${w.counts.withSpaces}자 / 원고지 ${w.counts.sheets}매\n줄거리: ${w.synopsis || '(없음)'}`;
+    const cs = JSON.stringify(list.map((c) => ({ 이름: c.name, 부문: c.section, 분량단위: UNITS.find((u) => u[0] === c.unit)[1], 하한: c.min, 상한: c.max, 제출방식: c.method, 마감: c.deadline, AI규정: c.aiRule, 특이사항: c.note })));
+    const engine = A.createEngine({ sample, config: cfgFromPrefs() });
+    return (await engine.call({ role: '심사위원', task: 'contestFit', label: '공모전 적합도', prompt: P.T.contestFit({ summary, info, contests: cs }) })).text;
+  }
+
   /* ───────────── 시작 ───────────── */
   async function init(app) {
     N = app; ({ h, S, $, fmt, fmtDate, toast, modal, askConfirm } = app);
-    N.views.wizard = renderWizard; N.views.ai = renderAI; N.views.proposals = renderReview; N.views.profiles = renderProfiles; N.sceneDialog = sceneDialog; N.profileSelect = profileSelect; N.hooks.settings.push(settingsCard); N.hooks.afterRender = updateStrip;
+    N.views.wizard = renderWizard; N.views.ai = renderAI; N.views.proposals = renderReview; N.views.bible = renderBible; N.views.contests = renderContests; N.views.profiles = renderProfiles; N.sceneDialog = sceneDialog; N.profileSelect = profileSelect; N.hooks.settings.push(settingsCard); N.hooks.afterRender = updateStrip;
     const jobs = await N.storage.listJobs();
     for (const j of jobs) if (j.status === 'running') { j.status = 'paused'; j.pausedReason = '창을 닫거나 새로고침해 중단되었습니다. 저장된 지점부터 이어서 진행할 수 있습니다.'; j.steps.forEach((s) => { if (s.status === 'running') s.status = 'pending'; }); await N.storage.putJob(j); }
     const m = await N.storage.getMeta('wizard'); if (m) U.wiz = Object.assign(U.wiz, m);

@@ -286,10 +286,31 @@ ${profile && profile.trim() ? profile.trim() : '(지정된 프로필 없음)'}
   T.period = (work, o) => compose({ role: '연속성감독', task: `${o.label}을(를) 읽고 시대·생활·제도·용어의 고증 문제를 점검한다. 작품의 배경: ${o.era || '(지정되지 않음 — 원고에서 파악)'}. 당신은 웹 검색을 할 수 없고 출처를 확인할 수 없다. 따라서 출처·연도를 지어내지 말고, 확신이 없으면 category를 "미확인"으로 한다. 분류: 확인됨(널리 알려진 사실이며 원고가 맞다) / 추정(여러 정황으로 보아 그럴 법하다) / 미확인(확인하지 못했다) / 시대착오(그 시대에 없었을 가능성이 있는 사물·제도·용어·표현). 점검 대상: 사건 시기, 제도·법률, 관직·관청, 신분·관습, 화폐·경제, 주거·의복·식생활, 이동 수단, 무기·도구, 당시의 말투·표현, 계절·기후. 고증의 목적은 독자가 현실감을 느끼게 하는 것이지 역사 교과서를 만드는 것이 아니다. 문제가 없는 항목은 적지 않는다.`,
     sections: [{ tag: 'TEXT', text: o.text }],
     format: 'JSON 객체 하나만: {"items":[{"category":"확인됨|추정|미확인|시대착오","quote":"원문 인용(그대로)","claim":"원고가 전제하는 사실","basis":"판단 근거(모르면 비움)","suggestion":"고친다면 어떻게(없으면 비움)"}]}' });
+  const GENRE_CONVENTIONS = {
+    '순문학(현실주의)': '생활의 구체성, 감정을 설명하지 않는 서술, 인물의 선택과 관계의 불균형, 주제를 가르치지 않는 결말',
+    '역사': '시대의 생활 감각과 물질성, 시대착오 금지, 제도와 신분 안에서의 인물의 선택',
+    '미스터리': '단서의 공정성(독자도 같은 단서를 본다), 거짓 해답과 반전, 정보 공개의 순서',
+    '스릴러': '시간 압박, 위협의 단계적 상승, 주인공의 선택이 상황을 악화시키는 구조',
+    '로맨스': '관계의 진전 단계(만남·끌림·장애·갈등·선택), 감정의 긴장과 밀당',
+    'SF': '설정의 일관성, 기술·사회 변화가 인물의 선택에 미치는 영향, 낯선 규칙의 설명을 사건 속에 녹이기',
+    '판타지': '세계의 규칙과 대가, 이질적 세계와 인물의 결합, 설정 설명을 행동 속에 녹이기',
+    '호러': '불길한 징조의 누적, 정보의 은폐, 일상이 무너지는 순간, 공포를 설명하지 않기',
+    '무협': '문파·관계의 의리와 배신, 무공의 대가, 강호의 규칙, 속도감 있는 대결',
+    '청소년': '또래 관계와 성장의 갈림길, 눈높이에 맞는 어휘, 과한 교훈 금지',
+    '동화': '단순하고 리듬 있는 반복, 분명한 구조, 어린이 눈높이, 훈계 금지',
+    '기타': '원작의 분위기와 핵심을 살리는 방향',
+  };
+  T.genreConvert = (work, o) => compose({ role: '각색자', aiTells: true, style: styleGuide(work),
+    task: `원작의 일부를 "${o.target}" 장르로 전환해 다시 쓴다. 유지할 요소: ${o.keep && o.keep.length ? o.keep.join(', ') : '(지정 없음)'}. 유지하지 않는 요소는 목표 장르에 맞게 바꿀 수 있다. 목표 장르의 관습을 점검 목록으로 삼는다: ${GENRE_CONVENTIONS[o.target] || ''}. 변환 방식: ${o.modeText}. 목표: ${o.targetText}. 핵심 사건이나 인물 관계를 바꿨다면 문단 끝에 [변경: 이유] 를 붙인다. 장르 관습을 억지로 덧붙여 작품의 본질을 훼손하지 않는다.`,
+    sections: [{ tag: 'BIBLE', text: o.bible }, { tag: 'SOURCE_EXCERPT', text: o.text }], format: '전환한 소설 본문만 출력한다(제목 없이). 문단은 줄바꿈 한 번으로 나눈다.' });
+  T.contestFit = (o) => compose({ role: '심사위원', aiTells: false,
+    task: '작품에 대한 심사 요약과 작가가 직접 입력한 공모전 정보를 보고, 각 공모전에 이 작품이 맞는지 검토한다. 공모전의 요강은 작가가 입력한 내용만 근거로 삼는다. 입력되지 않은 정보(분량 규정, 장르 제한, AI 사용 규정 등)는 "확인 필요"라고 적고 추측하지 않는다. 신문사나 문학상의 취향을 억지로 따라가 작품의 본질을 훼손하라고 권하지 않는다.',
+    sections: [{ tag: 'JUDGE_SUMMARY', text: o.summary }, { tag: 'WORK_INFO', text: o.info }, { tag: 'CONTESTS_ENTERED_BY_AUTHOR', text: o.contests }],
+    format: '일반 글로, 공모전마다 소제목(공모전 이름) 아래에 1) 분량·형식 적합 여부 2) 작품의 성향과의 궁합 3) 응모 전 확인할 것 순서로 짧게 쓴다.' });
   T.rebuttal = (o) => compose({ role: '심사위원', aiTells: false,
     task: '작가가 아래 심사 보고서의 일부 지적에 반대한다. 반론을 읽고 타당한 부분은 인정해 평가를 고치고, 근거가 약하면 그 이유를 밝히며 기존 평가를 유지한다. 작가의 설명(원고 밖의 사실)과 원고에서 확인되는 사실을 구별해서 말한다. 작가를 달래려고 평가를 바꾸지 않고, 고집하려고 바꾸지 않는 일도 없다.',
     sections: [{ tag: 'REPORT', text: o.report }, { tag: 'AUTHOR_OBJECTION', text: o.objection }, { tag: 'MANUSCRIPT_EXCERPT', text: o.excerpt }],
     format: '다음 형식의 일반 글로 쓴다: 1) 인정하는 부분과 수정되는 평가 2) 유지하는 부분과 그 근거(원고 속 장면·문장 인용) 3) 수정 후 점수가 달라진다면 항목별 새 점수.' });
 
-  return { AUTHOR_PROFILE_DEFAULT, PASSES, SCENE_ACTIONS, editSystem, PROMPT_VERSION, COMMON, AI_TELLS, aiTellsText, STYLE_PRESETS, POV_TEXT, styleGuide, ROLES, LEVELS, AUTOMATION, JUDGE_ANCHORS, JUDGE_DISCLAIMER, compose, fence, briefText, T };
+  return { GENRE_CONVENTIONS, AUTHOR_PROFILE_DEFAULT, PASSES, SCENE_ACTIONS, editSystem, PROMPT_VERSION, COMMON, AI_TELLS, aiTellsText, STYLE_PRESETS, POV_TEXT, styleGuide, ROLES, LEVELS, AUTOMATION, JUDGE_ANCHORS, JUDGE_DISCLAIMER, compose, fence, briefText, T };
 });

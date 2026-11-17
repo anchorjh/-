@@ -285,6 +285,7 @@
     } else if (type === 'analyze') {
       scope.forEach((i) => steps.push(step('analyze_ch', i, `${i + 1}장 설정 추출`)));
     } else if (type === 'continuity') {
+      if (params.analyzeFirst) scope.forEach((i) => steps.push(step('analyze_ch', i, `${i + 1}장 설정 추출`)));
       scope.forEach((i) => steps.push(step('cont_ch', i, `${i + 1}장 연속성 점검`)));
     } else if (type === 'period') {
       scope.forEach((i) => steps.push(step('period_ch', i, `${i + 1}장 고증 점검`)));
@@ -853,12 +854,13 @@
     }
     const nv = await ctx.storage.getVersion(J.resultVersionId || '__none__');
     if (!nv) {
-      const v = C.makeVersion({ workId: J.state.newWorkId, parentId: null, label: p.direction === 'novel2script' ? 'AI 시나리오(초안)' : 'AI 소설(초안)', kind: 'AI 변환', frozen: true, note: `원작: ${work.title} / ${src.label}`, chapters: src.chapters.map((c) => ({ id: C.uid('c'), title: c.title, paragraphs: [C.newParagraph('')] })) });
+      const v = C.makeVersion({ workId: J.state.newWorkId, parentId: null, label: p.direction === 'novel2script' ? 'AI 시나리오(초안)' : p.direction === 'genre' ? `AI 장르 전환(${p.targetGenre})` : 'AI 소설(초안)', kind: 'AI 변환', frozen: true, note: `원작: ${work.title} / ${src.label}`, chapters: src.chapters.map((c) => ({ id: C.uid('c'), title: c.title, paragraphs: [C.newParagraph('')] })) });
       v.ai = { jobId: J.id, type: 'convert', status: 'partial', promptVersion: P.PROMPT_VERSION };
       J.resultVersionId = v.id; ctx.resultVer = v; await ctx.saveVer(); await ctx.saveJob();
       await ctx.storage.putWork(Object.assign(await ctx.storage.getWork(J.state.newWorkId), { currentVersionId: v.id }));
     }
   };
+  const fmt0 = (n) => String(Math.round(n));
   function convertChunks(src, maxChars) {
     // 장 단위로 묶되, 한 장이 한도보다 길면 단락 경계에서 쪼갠다. [{chapter, paras:[text]}]
     const out = [];
@@ -875,10 +877,11 @@
     let targetText;
     if (p.direction === 'novel2script') targetText = `전체 ${p.target.minutes ? '러닝타임 약 ' + p.target.minutes + '분' : ''} ${p.target.scenes ? '장면 약 ' + p.target.scenes + '개' : ''}에서 이 부분은 약 ${Math.max(1, Math.round((p.target.minutes || 0) * share)) || '적절한'}분, 장면 ${Math.max(1, Math.round((p.target.scenes || 0) * share)) || '적절한 수의'}개 분량`;
     else targetText = `전체 목표 ${p.target.chars ? p.target.chars + '자' : '원작에 맞는 분량'} 중 이 부분은 약 ${Math.round((p.target.chars || ck.text.length * 2) * share)}자`;
-    const args = { format: p.format, modeText: p.modeText, targetText, startScene, bible: bibleText(work, { maxChars: 3000 }), text: ck.text };
-    const r = await ctx.call({ role: '각색자', task: p.direction, label: `${st.arg + 1}/${chunks.length} 변환`, prompt: p.direction === 'novel2script' ? P.T.novelToScript(work, args) : P.T.scriptToNovel(work, args) });
+    if (p.direction === 'genre') targetText = `원작과 비슷한 분량(전체 약 ${fmt0(totalChars)}자 중 이 부분 약 ${fmt0(ck.text.length)}자)`;
+    const args = { format: p.format, modeText: p.modeText, targetText, startScene, bible: bibleText(work, { maxChars: 3000 }), text: ck.text, target: p.targetGenre, keep: p.keep };
+    const r = await ctx.call({ role: '각색자', task: p.direction, label: `${st.arg + 1}/${chunks.length} 변환`, prompt: p.direction === 'novel2script' ? P.T.novelToScript(work, args) : p.direction === 'genre' ? P.T.genreConvert(work, args) : P.T.scriptToNovel(work, args) });
     let text = cleanProse(r.text).text;
-    if (r.truncated || (p.direction === 'script2novel' && looksTruncated(text))) {
+    if (r.truncated || (p.direction !== 'novel2script' && looksTruncated(text))) {
       const r2 = await ctx.call({ role: '각색자', task: 'continue', label: '변환 이어쓰기', prompt: P.T.continueText(work, { scenePlan: '변환 중인 장면을 마무리', tail: lastChars(text, 900) }) });
       text += '\n' + cleanProse(r2.text).text;
       if (r2.truncated) ctx.warn(`${st.arg + 1}번째 변환 묶음이 끝맺지 못했을 수 있습니다.`);

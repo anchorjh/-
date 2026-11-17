@@ -458,3 +458,16 @@ test('연속성 점검(자동 수정 없음): 충돌은 작가 확인 목록으�
   const job = A.buildJob('continuity', work, { baseVersionId: base.id, noFix: true }, { chapterCount: 2 }); await env.storage.putJob(job); await env.runner.run(job);
   assert.equal(job.status, 'done'); assert.equal(job.resultVersionId, null); assert.equal(job.report.continuity.confirm.length, 2); assert.equal(job.report.continuity.fixed.length, 0);
 });
+
+test('장르 전환: 새 작품(파생)으로 저장, 목표 장르·유지 요소·장르 관습이 프롬프트에 들어간다', async () => {
+  const env = setup({}); const { job, src, nw } = await convertJob(env, 'novel2script', '정숙이 셔터를 올렸다. 용석이 상자를 내려놓았다.', { direction: 'genre', targetGenre: '스릴러', keep: ['인물', '핵심 사건'], format: '', target: {} });
+  await env.runner.run(job); assert.equal(job.status, 'done', job.pausedReason);
+  const v = await env.storage.getVersion(job.resultVersionId); assert.match(C.versionText(v), /정숙은 문을 잠갔다/); assert.match(v.label, /장르 전환\(스릴러\)/);
+  const prompt = env.sample.mock.calls.find((c) => c.kind === 'genre').prompt;
+  assert.match(prompt, /"스릴러" 장르로 전환/); assert.match(prompt, /인물, 핵심 사건/); assert.match(prompt, /시간 압박/);
+  assert.equal(JSON.stringify((await env.storage.getVersion(src.id)).chapters).includes('문을 잠갔다'), false, '원작 불변');
+});
+test('연속성 점검: 먼저 설정 추출 옵션이 있으면 추출 단계가 앞에 붙는다', async () => {
+  const work = newWork(); const job = A.buildJob('continuity', work, { baseVersionId: 'v', noFix: true, analyzeFirst: true }, { chapterCount: 2 });
+  assert.deepEqual(job.steps.map((s) => s.kind), ['analyze_ch', 'analyze_ch', 'cont_ch', 'cont_ch']);
+});

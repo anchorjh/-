@@ -2,6 +2,7 @@
 // 답의 문학적 품질은 검증하지 못한다. 단계 연결·재개·검증·되돌림 같은 "배관"을 점검하는 용도다.
 const block = (p, tag) => { const m = new RegExp('<' + tag + '>\\n([\\s\\S]*?)\\n</' + tag + '>').exec(p); return m ? m[1] : ''; };
 const kinds = [
+  ['genre', /장르로 전환해 다시 쓴다/],
   ['diagEdits', /진단만 하라/], ['edits', /\[이번 패스\]/], ['scene', /아래 장면에 ".*"을 수행한다/], ['linkCheck', /앞뒤 장면과 자연스럽게 이어지는지 점검/], ['period', /고증 문제를 점검한다/],
   ['idea', /아이디어를 발전시킨다/], ['design', /이야기를 설계한다/], ['writeScene', /번째 장면을 쓴다/], ['continue', /직전 출력이 중간에서 끊겼다/],
   ['adjust', /아래 본문이 목표\(약/], ['summarize', /사실 위주로 3~5문장 요약/], ['track', /해결됐는지/], ['revisePlan', /개고 계획을 세운다/],
@@ -57,6 +58,7 @@ function makeMock(o) {
       case 'scene': { const t = block(prompt, 'SCENE'); if (m.sceneHook) { const h = m.sceneHook(t); if (h != null) return { text: h, truncated: false }; } return { text: t + '\n마지막 줄이 하나 더해졌다.', truncated: false }; }
       case 'linkCheck': return J(m.linkData || { ok: true, issues: [] });
       case 'period': { const t = block(prompt, 'TEXT'); const items = [{ category: '미확인', quote: '지어낸 인용은 없다', claim: 'x', basis: '', suggestion: '' }]; if (t.includes('핸드폰')) items.push({ category: '시대착오', quote: '핸드폰', claim: '1980년대에 핸드폰', basis: '', suggestion: '전화기' }); return J({ items }); }
+      case 'genre': return { text: '정숙은 문을 잠갔다. 누군가 뒤에서 지켜보고 있었다. [변경: 장르 관습으로 위협 추가]', truncated: false };
       case 'idea': return J({ logline: '새벽 시장의 부부가 외상을 받으러 간다.', coreIdea: '외상장부가 관계의 장부가 된다', protagonistDesire: '떳떳하게 돈을 받고 싶다', mainConflict: '남편이 받으러 가기를 미룬다', cause: '식당 주인과의 오랜 인연', expectedEnding: '상품권으로 갚으려는 주인과 마주 앉는다', differentiators: ['생활 디테일'], similar: [], assumed: ['배경을 현대 서울로 정함'] });
       case 'design': {
         const n = +(/총 (\d+)개 장/.exec(prompt) || [0, 3])[1] || 3, total = +(/\((\d+)자\)/.exec(prompt) || [0, 3000])[1];
