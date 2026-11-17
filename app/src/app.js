@@ -19,6 +19,8 @@
   let bc = null; try { bc = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('novel-studio') : null; } catch (e) { bc = null; }
 
   /* ───────────── DOM 도우미 ───────────── */
+  // append/replaceChildren 에 null·false·배열이 들어가면 "null", "[object ...]" 가 글자로 찍힌다. 안전하게 거른다.
+  ['append', 'replaceChildren'].forEach((m) => { const orig = Element.prototype[m]; Element.prototype[m] = function () { return orig.apply(this, Array.prototype.slice.call(arguments).flat(Infinity).filter((x) => x != null && x !== false)); }; });
   const $ = (s, r) => (r || document).querySelector(s);
   function h(tag, attrs) {
     const el = document.createElement(tag);
@@ -148,7 +150,7 @@
         S.ver.updatedAt = C.nowIso();
         S.ver.stats = { withSpaces: t.withSpaces, noSpaces: t.noSpaces, sheets: t.sheets };
         S.work.updatedAt = S.ver.updatedAt; S.work.currentVersionId = S.ver.id;
-        S.work.counts = { withSpaces: t.withSpaces, noSpaces: t.noSpaces, sheets: t.sheets, simple: t.simple, grid: t.grid, chapters: S.ver.chapters.length };
+        S.work.counts = { withSpaces: t.withSpaces, noSpaces: t.noSpaces, sheets: t.sheets, simple: t.simple, grid: t.grid, chapters: S.ver.chapters.length, aiShare: C.aiShare(S.ver) };
         S.work.cursor = { chapterId: curCh() && curCh().id };
         await S.storage.putVersion(S.ver);
         await S.storage.putWork(S.work);
@@ -193,17 +195,19 @@
     if (S.view === 'library') renderLibrary(main);
     else if (S.view === 'wizard') NSApp.views.wizard(main);
     else if (S.view === 'settings') renderSettings(main);
+    else if (S.view === 'profiles') NSApp.views.profiles(main);
     else if (!S.work) { go('library'); return; }
     else if (S.view === 'write') renderWrite(main);
     else if (S.view === 'compare') renderCompare(main);
     else if (S.view === 'stats') renderStats(main);
     else if (S.view === 'ai') NSApp.views.ai(main);
+    else if (NSApp.views[S.view]) NSApp.views[S.view](main);
     if (NSApp.hooks.afterRender) NSApp.hooks.afterRender();
     refreshSaveState();
   }
   function renderNav() {
-    const items = [['library', '작품 보관함'], ['wizard', 'AI로 새 작품'], ['write', '집필 공간'], ['ai', 'AI 작업실'], ['compare', '버전 비교'], ['stats', '문체 통계'], ['settings', '설정·백업']];
-    const nav = $('#nav'); nav.replaceChildren(...items.map(([k, t]) => h('button', { 'aria-current': S.view === k ? 'page' : null, disabled: k !== 'library' && !S.work && k !== 'settings' && k !== 'wizard', onclick: () => go(k) }, t)));
+    const items = [['library', '작품 보관함'], ['wizard', 'AI로 새 작품'], ['write', '집필 공간'], ['ai', 'AI 작업실'], ['compare', '버전 비교'], ['stats', '문체 통계'], ['profiles', '문체 프로필'], ['settings', '설정·백업']];
+    const nav = $('#nav'); nav.replaceChildren(...items.map(([k, t]) => h('button', { 'aria-current': S.view === k ? 'page' : null, disabled: k !== 'library' && !S.work && k !== 'settings' && k !== 'wizard' && k !== 'profiles', onclick: () => go(k) }, t)));
     $('#worktitle').textContent = S.work && S.view !== 'library' ? S.work.title : '';
   }
   function refreshSaveState() {
@@ -452,6 +456,7 @@
       h('span', { class: 'sep' }),
       h('button', { class: 'btn sm', onclick: () => pickFile('.txt,.md,.docx,.hwpx,.hwp', appendImport) }, '파일에서 장 추가'),
       h('button', { class: 'btn sm', onclick: exportDialog }, '내보내기'),
+      NSApp.sceneDialog ? h('button', { class: 'btn sm', onclick: () => NSApp.sceneDialog(), title: '커서가 있는 장면(또는 선택한 단락)에 AI 작업을 실행' }, '장면 AI 작업') : null,
       h('button', { class: 'btn sm', onclick: () => toggleFocus(true) }, '집중 모드'));
     refreshUndo();
   }
@@ -659,6 +664,8 @@
     pb.append(h('div', { class: 'stack' }, txt('title', '작품명'), h('div', { class: 'grid2' }, sel('genre', '장르', GENRES), sel('status', '집필 상태', STATUSES)),
       h('label', { class: 'fld' }, '주요 등장인물 (문체 통계의 인물 등장 분석에 쓰입니다)', names), txt('synopsis', '줄거리', 4), txt('setting', '핵심 설정', 3), txt('todo', '집필하면서 확인할 사항', 3), txt('memo', '수정 메모', 3), txt('styleGuide', '문체 지침 (AI 작업에 쓰임. 비워 두면 “한국적 현실주의” 기본값)', 5),
       h('div', { class: 'grid2' }, txt('penName', '필명 (응모 점검용)'), txt('realName', '본명 (응모 점검용)')),
+      NSApp.profileSelect ? NSApp.profileSelect(w, save) : null,
+      h('div', { class: 'small muted' }, `AI 기여 비율(현재 버전, 글자 수 기준 대략): ${Math.round(C.aiShare(S.ver) * 100)}%`),
       h('div', { class: 'small muted' }, `만든 날 ${fmtDate(w.createdAt)} · 수정 ${fmtDate(w.updatedAt)}`)));
   }
 
@@ -914,7 +921,7 @@
   /* ───────────── 다른 모듈(AI 화면)에 열어 주는 것 ───────────── */
   const NSApp = {
     S, h, $, fmt, pad, fmtDate, toast, modal, askConfirm, saveFile, go, render, openWork, loadWorks, defaultWork, flushAndSave, pickFile, importDialog, createWorkFromImport,
-    markDirty, saveNow, jumpTo, openVersion, KINDS, GENRES, STATUSES, TAB, verMeta, views: {}, hooks: { settings: [] },
+    markDirty, saveNow, jumpTo, openVersion, prepEdit: () => prep(), afterStructureChange: () => afterStructureChange(), processEditor: (f) => processEditor(f), KINDS, GENRES, STATUSES, TAB, verMeta, views: {}, hooks: { settings: [] },
     get storage() { return S.storage; },
     getWork: async (id) => (S.work && S.work.id === id ? JSON.parse(JSON.stringify(S.work)) : S.storage.getWork(id)),
     updateWork: async (id, fn) => { if (S.work && S.work.id === id) { fn(S.work); await S.storage.putWork(S.work); return S.work; } const w = await S.storage.getWork(id); fn(w); await S.storage.putWork(w); return w; },

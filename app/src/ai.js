@@ -65,6 +65,10 @@
   V.strategy = (o) => { if (!isO(o)) return ['객체가 아닙니다']; o.level = Math.min(5, Math.max(1, Math.round(+o.level) || 4)); if (!isA(o.global)) o.global = []; if (!isA(o.chapters)) o.chapters = []; return []; };
   V.styleCheck = (o) => { if (!isO(o) || !isA(o.inconsistent)) return ['inconsistent 누락']; return []; };
   V.sceneMap = (o) => { if (!isO(o) || !isA(o.scenes)) return ['scenes 누락']; o.scenes = o.scenes.filter(isO).map((s) => ({ target: String(s.target || ''), source: String(s.source || ''), relation: ['유지', '변경', '삭제', '신규'].includes(s.relation) ? s.relation : '변경', coreChange: !!s.coreChange, note: s.note || '' })); return []; };
+  V.edits = (o) => { if (!isO(o) || !isA(o.edits)) return ['edits 누락']; if (!isA(o.notes)) o.notes = []; o.edits = o.edits.filter((e) => isO(e) && isS(e.old) && isS(e.new)).map((e) => ({ old: e.old, new: e.new, tag: isS(e.tag) ? e.tag : '', why: isS(e.why) ? e.why : '' })); o.notes = o.notes.filter(isS); return []; };
+  V.diagEdits = (o) => { if (!isO(o) || !isA(o.problems)) return ['problems 누락']; if (!isA(o.seedMap)) o.seedMap = []; if (!isA(o.notes)) o.notes = []; const cats = ['해설', '반복', '주저동작', '소품', '어휘']; o.problems = o.problems.filter((p) => isO(p) && isS(p.quote)).map((p) => ({ category: cats.includes(p.category) ? p.category : '해설', quote: p.quote, note: isS(p.note) ? p.note : '', count: isN(+p.count) ? +p.count : null })); o.seedMap = o.seedMap.filter((x) => isO(x) && isS(x.seed)).map((x) => ({ seed: x.seed, harvest: isS(x.harvest) && x.harvest ? x.harvest : null, note: isS(x.note) ? x.note : '' })); return []; };
+  V.linkCheck = (o) => { if (!isO(o)) return ['객체가 아닙니다']; o.ok = !!o.ok; if (!isA(o.issues)) o.issues = []; o.issues = o.issues.filter(isO).map((i) => ({ where: i.where || '', problem: i.problem || '', quote: i.quote || '' })); return []; };
+  V.period = (o) => { if (!isO(o) || !isA(o.items)) return ['items 누락']; const cats = ['확인됨', '추정', '미확인', '시대착오']; o.items = o.items.filter((i) => isO(i) && isS(i.quote)).map((i) => ({ category: cats.includes(i.category) ? i.category : '미확인', quote: i.quote, claim: i.claim || '', basis: i.basis || '', suggestion: i.suggestion || '' })); return []; };
   const JUDGE_KEYS = ['완성도', '신선함', '문장력', '인물 생동감', '결말의 힘'];
   V.judge = (o) => {
     if (!isO(o) || !isO(o.scores)) return ['scores 누락'];
@@ -234,7 +238,7 @@
     const t = new Date().toISOString();
     return { id: C.uid('job'), workId, type, status: 'pending', createdAt: t, updatedAt: t, params, steps, state: { chapters: {}, notes: [] }, log: [], resultVersionId: null, report: { unprocessed: [], warnings: [] }, pausedReason: '', stats: { calls: 0, inChars: 0, outChars: 0, ms: 0 } };
   }
-  const TYPE_LABEL = { write: 'AI 자동 집필', revise: 'AI 자동 개고', oneclick: '원클릭 AI 완성', judge: '작품 진단', convert: '장르·형식 변환', phase: 'AI 구상' };
+  const TYPE_LABEL = { write: 'AI 자동 집필', draft: 'AI 초고 집필', revise: 'AI 자동 개고', oneclick: '원클릭 AI 완성', judge: '작품 진단', convert: '장르·형식 변환', phase: 'AI 구상', edits: '개고 제안(편집자 모드)', proofread: 'AI 자동 교열', analyze: '설정 추출', continuity: '연속성 점검', period: '고증 점검' };
 
   // chapters: 대상 버전의 장 수(작성 작업은 설계 후에 정해지므로 steps 가 동적으로 늘어난다)
   function buildJob(type, work, params, info) {
@@ -270,6 +274,20 @@
       scope.forEach((i) => steps.push(step('cont_ch', i, `⑧ ${i + 1}장 연속성 검증`)));
       steps.push(step('finalize', null, '⑨ 최종 원고 생성'));
       steps.push(step('judge', null, '⑩ 최종 심사위원 평가'));
+    } else if (type === 'edits') {
+      steps.push(step('prep', null, '작업 준비'), step('diag_edits', null, '진단(씨·거둠 지도, 문제 목록)'));
+      (params.passes || []).forEach((ps) => scope.forEach((i) => steps.push(Object.assign(step('edit_pass', i, `${i + 1}장 · ${ps} 패스`), { pass: ps }))));
+      steps.push(step('finalize_edits', null, '제안 정리'));
+    } else if (type === 'proofread') {
+      steps.push(step('prep', null, '작업 준비'));
+      scope.forEach((i) => steps.push(step('proof_ch', i, `${i + 1}장 교열`)));
+      steps.push(step('finalize', null, '교열본 마무리'));
+    } else if (type === 'analyze') {
+      scope.forEach((i) => steps.push(step('analyze_ch', i, `${i + 1}장 설정 추출`)));
+    } else if (type === 'continuity') {
+      scope.forEach((i) => steps.push(step('cont_ch', i, `${i + 1}장 연속성 점검`)));
+    } else if (type === 'period') {
+      scope.forEach((i) => steps.push(step('period_ch', i, `${i + 1}장 고증 점검`)));
     } else if (type === 'judge') {
       steps.push(step('judge', null, '심사위원 평가'));
     } else if (type === 'convert') {
@@ -286,7 +304,7 @@
   const CALL_WEIGHT = {
     idea: [1, 'default'], design: [1, 'default'], prep: [0, 'quick'], draft_ch: null, review_ch: [2, 'default'], analyze_ch: [1, 'quick'], diag_ch: [1, 'default'],
     rev_ch: null, rediag_ch: [2, 'default'], structure: [1, 'default'], strategy: [1, 'default'], polish_ch: null, style_check: [1, 'default'], proof_ch: null,
-    cont_ch: [1, 'default'], finalize: [0, 'quick'], judge: [1, 'complex'], conv_chunk: [1, 'complex'], map_chunk: [1, 'quick'],
+    cont_ch: [1, 'default'], period_ch: [1, 'default'], diag_edits: [1, 'default'], edit_pass: [1, 'default'], finalize_edits: [0, 'quick'], finalize: [0, 'quick'], judge: [1, 'complex'], conv_chunk: [1, 'complex'], map_chunk: [1, 'quick'],
   };
   function estimateJob(job, cfg, history) {
     cfg = Object.assign({}, DEFAULT_CONFIG, cfg || {});
@@ -449,7 +467,8 @@
       const base = await ctx.base(); if (!base) throw new AIError('transform_error', '기준 버전을 찾을 수 없습니다.');
       if (!base.frozen) throw new AIError('transform_error', '기준 버전이 고정되어 있지 않습니다.');
       const lvl = (job.params.level) || 4;
-      await ensureResult(ctx, { parentId: base.id, label: job.type === 'oneclick' ? `AI 완성 (${stamp()})` : `AI 개고 ${lvl}단계 (${stamp()})`, kind: 'AI 개고', note: `기준: ${base.label}`, chapters: C.cloneChapters(base.chapters) });
+      if (job.type === 'edits') { job.state.baseChars = C.countWithSpaces(C.versionText(base)); return; }
+      await ensureResult(ctx, { parentId: base.id, label: job.type === 'oneclick' ? `AI 완성 (${stamp()})` : job.type === 'proofread' ? `AI 교열 (${stamp()})` : `AI 개고 ${lvl}단계 (${stamp()})`, kind: job.type === 'proofread' ? 'AI 교열' : 'AI 개고', note: `기준: ${base.label}`, chapters: C.cloneChapters(base.chapters) });
       job.state.baseChars = C.countWithSpaces(C.versionText(base));
     }
   };
@@ -688,14 +707,16 @@
     await ctx.saveVer(); await ctx.saveJob();
   };
   HANDLERS.cont_ch = async (ctx, st, idx) => {
-    const i = st.arg, work = await ctx.getWork(), ver = await ctx.loadResult(), J = ctx.job;
+    const i = st.arg, work = await ctx.getWork(), J = ctx.job, ver = (await ctx.loadResult()) || (await ctx.base());
     const text = C.chapterText(ver.chapters[i]); if (!text.trim()) return;
     const facts = ((work.bible && work.bible.facts) || []).filter((f) => f.chapter <= i).map((f) => `[${f.kind}] ${f.fact} (${f.chapter}장)`).join('\n');
     const r = await ctx.call({ role: '연속성감독', task: 'continuity', label: `${i + 1}장 연속성`, tier: 'default', json: true, validate: V.continuity, prompt: P.T.continuity(work, { label: `${i + 1}장`, bible: bibleText(work, { upTo: i + 1, maxChars: 3000 }), facts, text }) });
     const rep = J.report.continuity = J.report.continuity || { fixed: [], confirm: [] };
     const fixable = r.data.conflicts.filter((c) => !c.maybeIntentional && c.severity !== '경미' && c.fix);
     r.data.conflicts.filter((c) => !fixable.includes(c)).forEach((c) => rep.confirm.push(Object.assign({ chapter: i + 1 }, c)));
-    if (fixable.length) {
+    J.state.contDone = (J.state.contDone || 0) + 1;
+    if (J.params.noFix) fixable.forEach((c) => rep.confirm.push(Object.assign({ chapter: i + 1 }, c)));
+    else if (fixable.length) {
       await reviseChapter(ctx, i, { level: 2, issues: fixable.map((c, k) => ({ id: 'C' + (k + 1), severity: c.severity, type: '설정', quote: c.quote, problem: c.problem + ' (확정: ' + c.established + ')', fix: c.fix })), plan: '', extra: '설정 충돌만 최소한으로 고친다. 다른 부분은 건드리지 않는다.' });
       fixable.forEach((c) => rep.fixed.push(Object.assign({ chapter: i + 1 }, c)));
     }
@@ -724,6 +745,87 @@
     }
     ver.ai = Object.assign(ver.ai || {}, { unprocessed: J.report.unprocessed });
     await ctx.saveVer();
+  };
+
+  /* 교열 단독 실행: 확정 오류는 새 교열본에 반영, 권장·작가확인은 제안으로 남긴다 */
+  async function proofFinalize(ctx) {
+    const J = ctx.job, ver = await ctx.loadResult(), rep = J.report.proofread || { applied: [], recommended: [], confirm: [], notFound: 0 };
+    const props = [];
+    const place = (rec, level) => {
+      const ci = rec.chapter - 1, ch = ver.chapters[ci]; if (!ch) return;
+      const hit = C.verifyEdits([{ old: rec.orig, new: rec.fixed, why: rec.reason, tag: '교열' }], ch, { pass: '교열', maxEdits: 99, maxGrow: 3, noveltyCheck: false });
+      if (!hit.ok.length) { rep.notFound++; return; }
+      props.push(Object.assign(hit.ok[0], { id: C.uid('pr'), chapter: ci, level, pass: '교열', status: 'pending' }));
+    };
+    rep.recommended.forEach((r) => place(r, '권장')); rep.confirm.forEach((r) => place(r, '작가확인'));
+    J.state.proposals = props; J.report.proofread = rep; J.report.proposalsBase = ver.id;
+    J.report.final = { chars: C.countWithSpaces(C.versionText(ver)), chapters: ver.chapters.length };
+    const base = await ctx.base(); J.report.diff = C.diffVersions(base, ver).summary;
+    ver.ai = Object.assign(ver.ai || {}, { unprocessed: J.report.unprocessed }); await ctx.saveVer();
+  }
+
+  /* 개고 제안(편집자 모드): 진단 → 패스별 제안 → 코드 검증 → (작가가 한 줄씩 수락·거절) */
+  async function profileOf(ctx, work) { return ctx.job.params.profile || work.__profile || ''; }
+  HANDLERS.diag_edits = async (ctx) => {
+    const J = ctx.job, base = await ctx.base(), work = await ctx.getWork(), profile = await profileOf(ctx, work);
+    const labeled = base.chapters.map((c, i) => `【${i + 1}장${c.title ? ' ' + c.title : ''}】\n${C.chapterText(c)}`);
+    const all = labeled.join('\n\n');
+    const dg = J.state.diagnosis = { seedMap: [], problems: [], notes: [], coverage: '' };
+    const run = async (text, label, coverage) => {
+      const r = await ctx.call({ role: '구조편집자', task: 'diagnose', label, tier: 'default', json: true, validate: V.diagEdits, prompt: P.T.diagnoseEdits(work, { text, profile, coverage }) });
+      const q = C.verifyQuotes(r.data.problems, text), sq = C.verifyQuotes(r.data.seedMap, text, 'seed');
+      dg.problems.push(...q.ok); dg.seedMap.push(...sq.ok.map((x) => (x.harvest && !text.includes(x.harvest) ? Object.assign({}, x, { harvest: null, note: ((x.note || '') + ' (거둠 인용이 원고에서 확인되지 않아 비움)').trim() }) : x)));
+      dg.notes.push(...r.data.notes); J.report.droppedQuotes = (J.report.droppedQuotes || 0) + q.dropped.length + sq.dropped.length;
+    };
+    if (A_bytes(all) <= ctx.cfg.judgeBytes) { await run(all, '진단(전체)', `전체 ${base.chapters.length}개 장의 전문을 보냈다.`); dg.coverage = '전체를 한 번에 읽고 진단했습니다. 씨와 거둠 지도는 작품 전체에서 점검했습니다.'; }
+    else { for (let i = 0; i < labeled.length; i++) await run(labeled[i], `${i + 1}장 진단`, `${i + 1}장만 보냈다. 다른 장은 읽지 않았다.`); dg.coverage = '분량이 길어 장별로 나눠 진단했습니다. 씨와 거둠 지도는 같은 장 안에서만 점검되었습니다.'; }
+    J.report.diagnosis = dg; await ctx.saveJob();
+  };
+  const A_bytes = (s) => new TextEncoder().encode(String(s)).length;
+  HANDLERS.edit_pass = async (ctx, st) => {
+    const J = ctx.job, base = await ctx.base(), work = await ctx.getWork(), ci = st.arg, ch = base.chapters[ci], def = P.PASSES[st.pass];
+    const chText = C.chapterText(ch); if (!chText.trim()) return;
+    const props = J.state.proposals = J.state.proposals || [], profile = await profileOf(ctx, work);
+    const probs = ((J.state.diagnosis && J.state.diagnosis.problems) || []).filter((p) => def.cats.includes(p.category) && chText.includes(p.quote));
+    const rejectedList = (work.rejectedEdits || []).slice(-40).map((r) => ({ old: r.old, new: r.new }));
+    const rejectedKeys = new Set((work.rejectedEdits || []).map((r) => C.editKey(r.old, r.new)));
+    const words = C.manuscriptWordSet(base);
+    const maxEdits = J.params.maxEdits || 8;
+    const parts = chText.length <= 8000 ? [ch.paragraphs.map((p) => p.text)] : chunkParas(ch.paragraphs.map((p) => p.text), 6000);
+    for (let k = 0; k < parts.length; k++) {
+      const text = parts[k].join('\n');
+      const r = await ctx.call({ role: '문장편집자', task: 'edits', label: `${ci + 1}장 ${st.pass}` + (parts.length > 1 ? ` (${k + 1}/${parts.length})` : ''), tier: 'complex', json: true, validate: V.edits, prompt: P.T.editPass(work, { pass: st.pass, profile, maxEdits, text, partial: parts.length > 1, problems: probs.filter((p) => text.includes(p.quote)), rejected: rejectedList }) });
+      const v = C.verifyEdits(r.data.edits, ch, { pass: st.pass, maxEdits, rejectedKeys, shorten: def.shorten, maxGrow: def.maxGrow, words, noveltyCheck: st.pass !== '어휘' });
+      v.ok.forEach((e) => {
+        if (props.some((p) => p.paraId === e.paraId && e.start < p.end && p.start < e.end)) { v.rejected.push({ edit: e, reason: '다른 패스의 제안과 겹침' }); return; }
+        props.push(Object.assign(e, { id: C.uid('pr'), chapter: ci, pass: st.pass, status: 'pending', level: null }));
+      });
+      const counts = J.report.rejectedCounts = J.report.rejectedCounts || {}, samples = J.report.rejectedSamples = J.report.rejectedSamples || [];
+      v.rejected.forEach((x) => { counts[x.reason] = (counts[x.reason] || 0) + 1; if (samples.length < 60) samples.push({ chapter: ci + 1, pass: st.pass, reason: x.reason, old: String(x.edit.old || '').slice(0, 60) }); });
+      (r.data.notes || []).forEach((n) => { (J.report.notes = J.report.notes || []).push({ chapter: ci + 1, pass: st.pass, note: n }); });
+      J.report.modelEdits = (J.report.modelEdits || 0) + r.data.edits.length;
+    }
+    await ctx.saveJob();
+  };
+  HANDLERS.finalize_edits = async (ctx) => {
+    const J = ctx.job, props = J.state.proposals || [];
+    props.sort((a, b) => a.chapter - b.chapter || a.paraIndex - b.paraIndex || a.start - b.start);
+    const by = {}; props.forEach((p) => { by[p.pass] = (by[p.pass] || 0) + 1; });
+    J.report.proposalsBase = J.params.baseVersionId; J.report.byPass = by; J.report.proposalCount = props.length;
+    const rej = Object.values(J.report.rejectedCounts || {}).reduce((a, b) => a + b, 0);
+    J.report.verifyNote = `모델이 낸 제안 ${J.report.modelEdits || 0}개 중 코드 검증을 통과한 ${props.length}개만 남겼습니다(걸러진 것 ${rej}개).`;
+  };
+
+  /* 고증 점검: 웹 검색을 쓸 수 없으므로 "모델이 아는 범위"일 뿐이며 출처를 확인하지 못했다고 밝힌다 */
+  HANDLERS.period_ch = async (ctx, st) => {
+    const J = ctx.job, base = await ctx.base(), work = await ctx.getWork(), ci = st.arg;
+    const text = C.chapterText(base.chapters[ci]); if (!text.trim()) return;
+    const era = J.params.era || (work.brief && work.brief.setting && [work.brief.setting.era, work.brief.setting.place].filter(Boolean).join(' / ')) || '';
+    const r = await ctx.call({ role: '연속성감독', task: 'period', label: `${ci + 1}장 고증`, tier: 'default', json: true, validate: V.period, prompt: P.T.period(work, { era, label: `${ci + 1}장`, text: clip(text, 20000) }) });
+    const q = C.verifyQuotes(r.data.items, text);
+    const rep = J.report.period = J.report.period || { items: [], dropped: 0 };
+    q.ok.forEach((it) => rep.items.push(Object.assign({ chapter: ci + 1 }, it))); rep.dropped += q.dropped.length;
+    await ctx.saveJob();
   };
 
   /* 심사 */
@@ -797,6 +899,7 @@
   /* 변환의 finalize: 장 구성 채우기 */
   const baseFinalize = HANDLERS.finalize;
   HANDLERS.finalize = async (ctx, st, idx) => {
+    if (ctx.job.type === 'proofread') return proofFinalize(ctx);
     if (ctx.job.type !== 'convert') return baseFinalize(ctx, st, idx);
     const J = ctx.job, src = await ctx.base(), ver = await ctx.loadResult();
     const chunks = convertChunks(src, Math.round(ctx.cfg.chunkChars * 1.3));
@@ -813,5 +916,24 @@
     await ctx.storage.putWork(nw);
   };
 
-  return { DEFAULT_CONFIG, AIError, FATAL, PAUSE, V, extractJSON, cleanProse, looksTruncated, chunkParas, lockify, restoreLocks, driftOk, applyRevision, bibleText, hashStr, createEngine, createRunner, buildJob, estimateJob, buildJudgeInput, verdictOf, JUDGE_KEYS, TYPE_LABEL, step, bytes, convertChunks, critMajor };
+  /* 장면 작업: 선택한 단락 범위만 다시 쓰고, 앞뒤와 이어지는지 점검한다(잠금 단락은 표지로 보호) */
+  async function sceneAction(engine, work, o) {
+    const ver = o.ver, ch = ver.chapters[o.chapterIndex], paras = ch.paragraphs.slice(o.start, o.end + 1);
+    if (!paras.length || !paras.some((p) => p.text.trim())) throw new AIError('transform_error', '고칠 장면이 비어 있습니다.');
+    const lk = lockify(paras);
+    const before = lastChars(ch.paragraphs.slice(0, o.start).map((p) => p.text).join('\n') || (o.chapterIndex > 0 ? C.chapterText(ver.chapters[o.chapterIndex - 1]) : ''), 700);
+    const after = clip(ch.paragraphs.slice(o.end + 1).map((p) => p.text).join('\n') || (ver.chapters[o.chapterIndex + 1] ? C.chapterText(ver.chapters[o.chapterIndex + 1]) : ''), 500);
+    const origText = paras.map((p) => p.text).join('\n');
+    const r = await engine.call({ role: o.action === '대화 재작성' || o.action === '설명 삭제' ? '문장편집자' : '소설가', task: 'scene', label: o.action, signal: o.signal, prompt: P.T.sceneAction(work, { action: o.action, pov: o.pov, bible: bibleText(work, { upTo: o.chapterIndex + 1, maxChars: 3000 }), before, after, extra: o.extra, text: lk.lines.join('\n') }) });
+    const out = cleanProse(r.text).text;
+    if (r.truncated || looksTruncated(out)) throw new AIError('transform_error', '결과가 끝맺지 못하고 끊겼습니다. 장면을 더 짧게 잡거나 다시 시도하세요.');
+    const restored = restoreLocks(out, lk.locks, 0);
+    if (restored == null) throw new AIError('transform_error', '잠금한 단락을 지키지 못한 결과여서 쓰지 않았습니다. 다시 시도하세요.');
+    let link = null;
+    try { link = (await engine.call({ role: '구조편집자', task: 'linkCheck', label: '앞뒤 연결 점검', signal: o.signal, tier: 'default', json: true, validate: V.linkCheck, prompt: P.T.linkCheck({ before, after, revised: restored }) })).data; }
+    catch (e) { if (e.code === 'cancelled') throw e; link = { ok: null, issues: [], error: e.message }; }
+    return { before: origText, after: restored, link, drift: { ratio: Math.round((C.countNoSpaces(restored) / Math.max(1, C.countNoSpaces(origText))) * 100) / 100 } };
+  }
+
+  return { sceneAction, DEFAULT_CONFIG, AIError, FATAL, PAUSE, V, extractJSON, cleanProse, looksTruncated, chunkParas, lockify, restoreLocks, driftOk, applyRevision, bibleText, hashStr, createEngine, createRunner, buildJob, estimateJob, buildJudgeInput, verdictOf, JUDGE_KEYS, TYPE_LABEL, step, bytes, convertChunks, critMajor };
 });

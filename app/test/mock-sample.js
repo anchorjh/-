@@ -2,6 +2,7 @@
 // 답의 문학적 품질은 검증하지 못한다. 단계 연결·재개·검증·되돌림 같은 "배관"을 점검하는 용도다.
 const block = (p, tag) => { const m = new RegExp('<' + tag + '>\\n([\\s\\S]*?)\\n</' + tag + '>').exec(p); return m ? m[1] : ''; };
 const kinds = [
+  ['diagEdits', /진단만 하라/], ['edits', /\[이번 패스\]/], ['scene', /아래 장면에 ".*"을 수행한다/], ['linkCheck', /앞뒤 장면과 자연스럽게 이어지는지 점검/], ['period', /고증 문제를 점검한다/],
   ['idea', /아이디어를 발전시킨다/], ['design', /이야기를 설계한다/], ['writeScene', /번째 장면을 쓴다/], ['continue', /직전 출력이 중간에서 끊겼다/],
   ['adjust', /아래 본문이 목표\(약/], ['summarize', /사실 위주로 3~5문장 요약/], ['track', /해결됐는지/], ['revisePlan', /개고 계획을 세운다/],
   ['revise', /을\(를\) 개고한다/], ['diagnose', /을\(를\) 읽고 문제를 찾는다/], ['proofread', /아래 글을 교열한다/], ['continuity', /충돌하는지 점검한다/],
@@ -38,6 +39,24 @@ function makeMock(o) {
     const J = (x) => ({ __json: x });
     const wrap = (x) => (x && x.__json !== undefined ? x : x);
     switch (kind) {
+      case 'diagEdits': {
+        const t = block(prompt, 'MANUSCRIPT'); if (m.diagEditsHook) return J(m.diagEditsHook(t));
+        const probs = [{ category: '해설', quote: '지어낸 문장은 원고에 없다', note: '없는 인용', count: null }];
+        if (t.includes('그대로 두었다')) probs.push({ category: '주저동작', quote: '그대로 두었다', note: '주저', count: 3 });
+        const ex = /[^.\n]*라는 것을 알았다\./.exec(t); if (ex) probs.push({ category: '해설', quote: ex[0].trim(), note: '해설', count: null });
+        return J({ seedMap: [{ seed: '장부', harvest: '지어낸 거둠', note: '' }, { seed: '장갑', harvest: null, note: '거둠 없음' }], problems: probs, notes: [] });
+      }
+      case 'edits': {
+        const pass = (/edits의 tag에는 "(.+?)"/.exec(prompt) || [0, ''])[1], t = block(prompt, 'MANUSCRIPT');
+        if (m.editsHook) { const h = m.editsHook(pass, t); if (h) return J(h); }
+        const edits = [{ old: '원고에 없는 문장입니다', new: '', tag: pass, why: '없는 문장' }];
+        if (pass === '해설') { const ex = /[^.\n]*라는 것을 알았다\./.exec(t); if (ex) edits.push({ old: ex[0].trim(), new: '', tag: pass, why: '장면이 이미 보여 줌' }); }
+        if (pass === '주저동작') { edits.push({ old: '그대로 두었다', new: '치워 버렸다', tag: pass, why: '결단 동작' }); const m2 = /[^.\n]*꺼내 보지 않았다\./.exec(t); if (m2) edits.push({ old: m2[0].trim(), new: '서랍을 닫았다.', tag: pass, why: '주저 동작' }); }
+        return J({ edits, notes: pass === '어휘' ? ['방언 형태는 확인 필요'] : [] });
+      }
+      case 'scene': { const t = block(prompt, 'SCENE'); if (m.sceneHook) { const h = m.sceneHook(t); if (h != null) return { text: h, truncated: false }; } return { text: t + '\n마지막 줄이 하나 더해졌다.', truncated: false }; }
+      case 'linkCheck': return J(m.linkData || { ok: true, issues: [] });
+      case 'period': { const t = block(prompt, 'TEXT'); const items = [{ category: '미확인', quote: '지어낸 인용은 없다', claim: 'x', basis: '', suggestion: '' }]; if (t.includes('핸드폰')) items.push({ category: '시대착오', quote: '핸드폰', claim: '1980년대에 핸드폰', basis: '', suggestion: '전화기' }); return J({ items }); }
       case 'idea': return J({ logline: '새벽 시장의 부부가 외상을 받으러 간다.', coreIdea: '외상장부가 관계의 장부가 된다', protagonistDesire: '떳떳하게 돈을 받고 싶다', mainConflict: '남편이 받으러 가기를 미룬다', cause: '식당 주인과의 오랜 인연', expectedEnding: '상품권으로 갚으려는 주인과 마주 앉는다', differentiators: ['생활 디테일'], similar: [], assumed: ['배경을 현대 서울로 정함'] });
       case 'design': {
         const n = +(/총 (\d+)개 장/.exec(prompt) || [0, 3])[1] || 3, total = +(/\((\d+)자\)/.exec(prompt) || [0, 3000])[1];

@@ -288,3 +288,57 @@ test('styleFingerprint: 로컬 통계 한 줄', () => {
   assert.match(f.text, /문장 평균 .*대화 비율 \d+%/); assert.ok(f.stats.sentences >= 3);
   assert.equal(C.styleFingerprint('').text, '');
 });
+
+/* ── 제안 검증·적용 ── */
+const chOf = (lines) => ({ paragraphs: lines.map((x) => C.newParagraph(x)) });
+test('verifyEdits: 원문이 정확히 한 번만 나와야 통과, 잠금·겹침·여러 단락·늘림 금지', () => {
+  const ch = chOf(['그는 문을 열었다. 그것은 슬픔이었다.', '잠금 문단입니다. 그대로 두었다.', '또 한 번 그대로 두었다. 그리고 갔다.']); ch.paragraphs[1].locked = true;
+  const r = C.verifyEdits([
+    { old: '그것은 슬픔이었다.', new: '', why: '해설' },                    // ok (삭제)
+    { old: '없는 문장', new: 'x', why: 'a' },                                // 못 찾음
+    { old: '그대로 두었다', new: '두었다', why: 'a' },                       // 잠금 단락 + 다른 단락에도 → 여러 번
+    { old: '그리고 갔다.', new: '그리고 갔다. 아주 길게 덧붙인 문장이 이어졌다.', why: 'a' }, // 늘림
+    { old: '또 한 번 그대로 두었다.', new: '또 한 번 두었다.', why: '주저' },  // ok? '그대로 두었다' 포함이지만 old 전체는 한 번
+    { old: '그는 문을 열었다. 그것은', new: '그는', why: '겹침' },            // 첫 편집과 겹침
+    { old: 'a\nb', new: 'c', why: 'x' },
+    { old: '문을 열었다', new: '문을 열었다', why: 'x' },
+  ], ch, { pass: '해설', shorten: true });
+  assert.deepEqual(r.ok.map((e) => e.old), ['그것은 슬픔이었다.', '또 한 번 그대로 두었다.']);
+  const reasons = r.rejected.map((x) => x.reason);
+  assert.ok(reasons.includes('원고에서 찾을 수 없음') && reasons.includes('이 패스는 문장을 늘릴 수 없음') && reasons.includes('다른 제안과 겹침') && reasons.includes('여러 단락에 걸침') && reasons.includes('바뀐 것이 없음'), reasons.join('|'));
+});
+test('verifyEdits: 잠금 단락 안의 제안은 거절, 여러 번 나오는 문자열은 모호함으로 거절', () => {
+  const ch = chOf(['같은 말. 같은 말.', '잠금 안의 문장.']); ch.paragraphs[1].locked = true;
+  const r = C.verifyEdits([{ old: '같은 말.', new: '', why: 'a' }, { old: '잠금 안의 문장.', new: '', why: 'a' }], ch, {});
+  assert.deepEqual(r.rejected.map((x) => x.reason), ['원고에 여러 번 나옴(앞뒤 글자를 늘려야 함)', '잠금 단락']);
+});
+test('verifyEdits: 최대 곳수, 이전에 거절한 제안, 새 낱말·비유 경고', () => {
+  const ch = chOf(['가나다 라마바.', '사아자 차카타.', '파하 거너더.']);
+  const mk = (i) => ({ old: ['가나다 라마바.', '사아자 차카타.', '파하 거너더.'][i], new: '', why: 'a' });
+  const r = C.verifyEdits([mk(0), mk(1), mk(2)], ch, { maxEdits: 2 }); assert.equal(r.ok.length, 2); assert.equal(r.rejected[0].reason, '한 패스 최대 2곳 초과');
+  const rk = C.verifyEdits([mk(0)], ch, { rejectedKeys: new Set([C.editKey('가나다 라마바.', '')]) }); assert.equal(rk.rejected[0].reason, '이전에 거절한 제안');
+  const w = C.verifyEdits([{ old: '가나다 라마바.', new: '푸르디푸른 하늘처럼 아득한 바다', why: 'a' }], ch, { words: new Set(['가나다']) });
+  assert.ok(w.ok[0].warnings.some((x) => /원고에 없던 낱말/.test(x)) && w.ok[0].warnings.includes('비유가 늘어남'));
+});
+test('verifyQuotes: 원고에 없는 인용은 버린다', () => {
+  const r = C.verifyQuotes([{ quote: '있는 문장' }, { quote: '지어낸 문장' }, { quote: '' }], '여기 있는 문장이 있다');
+  assert.equal(r.ok.length, 1); assert.equal(r.dropped.length, 2);
+});
+test('applyProposals: 원본 불변, 같은 단락 여러 곳 정확, 위치가 어긋나면 한 번만 나올 때 찾아서 적용, 잠금 거부', () => {
+  const ver = C.makeVersion({ workId: 'w', chapters: [C.newChapter('1', '하나 둘 셋 넷.\n다섯 여섯.\n잠금 일곱.')] }); ver.chapters[0].paragraphs[2].locked = true;
+  const before = JSON.stringify(ver.chapters); const P0 = ver.chapters[0].paragraphs;
+  const r = C.applyProposals(ver, [
+    { paraId: P0[0].id, start: 0, end: 2, old: '하나', new: '1' }, { paraId: P0[0].id, start: 6, end: 8, old: '셋', new: '3' },
+    { paraId: P0[1].id, start: 99, end: 101, old: '여섯', new: '6' },   // 위치 틀림 → 한 번만 나오므로 찾아 적용
+    { paraId: P0[2].id, start: 3, end: 5, old: '일곱', new: '7' },      // 잠금
+    { paraId: P0[1].id, start: 0, end: 2, old: '없음', new: 'x' },      // 못 찾음
+  ]);
+  assert.equal(JSON.stringify(ver.chapters), before, '원본 불변');
+  assert.equal(r.chapters[0].paragraphs[0].text, '1 둘 3 넷.'); assert.equal(r.chapters[0].paragraphs[1].text, '다섯 6.');
+  assert.equal(r.applied, 3); assert.deepEqual(r.failed.map((f) => f.reason).sort(), ['원문이 바뀌어 위치를 찾지 못함', '잠금 단락']);
+  assert.equal(r.chapters[0].paragraphs[0].source, 'ai-edit'); assert.equal(r.chapters[0].paragraphs[0].id, P0[0].id);
+});
+test('aiShare: AI 글자 비율', () => {
+  const v = C.makeVersion({ workId: 'w', chapters: [C.newChapter('1', '가나다라\n마바사아')] }); v.chapters[0].paragraphs[1].source = 'ai';
+  assert.equal(C.aiShare(v), 0.5);
+});

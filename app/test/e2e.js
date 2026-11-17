@@ -203,6 +203,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(await page.locator('h2', { hasText: '문장 길이 분포' }).count() === 1, '문체 통계가 계산된다');
   ok(await page.locator('h2', { hasText: '응모 전 점검' }).count() === 1, '신상 정보 점검 카드가 있다');
 
+  console.log('● 화면 깨짐 점검');
+  for (const name of ['작품 보관함', '집필 공간', '버전 비교', '문체 통계', '문체 프로필', '설정·백업', 'AI로 새 작품']) { await page.locator('nav button', { hasText: name }).first().click().catch(() => {}); await wait(500); const tx = await page.locator('main').textContent(); ok(!/\bnull\b|undefined|\[object/.test(tx), `“${name}” 화면에 null·undefined 같은 깨진 글자가 없다`); }
   console.log('● 콘솔 오류');
   eq(errors, [], '콘솔 오류·예외 없음');
 

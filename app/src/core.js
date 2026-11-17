@@ -501,6 +501,75 @@
     return { text: `문장 평균 ${st.avgLen}자(중앙값 ${st.medianLen}자), 대화 비율 ${(st.dialogRatio * 100).toFixed(0)}%, 문단 평균 ${avgPara}자` + (ends ? `, 자주 쓰는 문장 끝: ${ends}` : ''), stats: { avgLen: st.avgLen, medianLen: st.medianLen, dialogRatio: st.dialogRatio, avgPara, sentences: st.sentenceCount } };
   }
 
+  /* ───────────── 제안(edits) 검증·적용: 모델은 old/new/why 만 내고, 코드가 검증한다 ───────────── */
+  const hangulWords = (text) => { const set = new Set(); for (const m of String(text).matchAll(/[가-힣]{2,}/g)) set.add(m[0]); return set; };
+  const manuscriptWordSet = (ver) => hangulWords(versionText(ver));
+  const editKey = (old, nw) => old + '\u0001' + nw;
+  const SIMILE = /처럼|같이|듯이|듯|마치/g;
+  const countMatches = (s, re) => (String(s).match(re) || []).length;
+  // 한 장(chapter) 안에서 제안을 검증한다. old 는 그 장 본문에 정확히 한 번만 나와야 한다.
+  function verifyEdits(edits, chapter, o) {
+    o = Object.assign({ pass: '', maxEdits: 8, rejectedKeys: new Set(), shorten: false, maxGrow: 1.5, words: null, noveltyCheck: true }, o || {});
+    const ok = [], rejected = [], taken = [];
+    const reject = (e, reason) => rejected.push({ edit: e, reason });
+    for (const e of edits) {
+      const old = String(e.old == null ? '' : e.old), nw = String(e.new == null ? '' : e.new);
+      if (!old) { reject(e, '원문 없음'); continue; }
+      if (old === nw) { reject(e, '바뀐 것이 없음'); continue; }
+      if (old.includes('\n') || nw.includes('\n')) { reject(e, '여러 단락에 걸침'); continue; }
+      if (o.rejectedKeys.has(editKey(old, nw))) { reject(e, '이전에 거절한 제안'); continue; }
+      let hits = [];
+      chapter.paragraphs.forEach((p, pi) => { let from = 0, idx; while ((idx = p.text.indexOf(old, from)) !== -1) { hits.push({ paraId: p.id, paraIndex: pi, start: idx, end: idx + old.length, locked: p.locked }); from = idx + 1; } });
+      if (hits.length === 0) { reject(e, '원고에서 찾을 수 없음'); continue; }
+      if (hits.length > 1) { reject(e, '원고에 여러 번 나옴(앞뒤 글자를 늘려야 함)'); continue; }
+      const h = hits[0];
+      if (h.locked) { reject(e, '잠금 단락'); continue; }
+      if (taken.some((t) => t.paraId === h.paraId && h.start < t.end && t.start < h.end)) { reject(e, '다른 제안과 겹침'); continue; }
+      if (o.shorten && nw.length > old.length) { reject(e, '이 패스는 문장을 늘릴 수 없음'); continue; }
+      if (nw.length > old.length * o.maxGrow + 20) { reject(e, '원문보다 지나치게 길어짐'); continue; }
+      if (ok.length >= o.maxEdits) { reject(e, `한 패스 최대 ${o.maxEdits}곳 초과`); continue; }
+      const warnings = [];
+      if (o.noveltyCheck && o.words && nw) { const novel = [...hangulWords(nw)].filter((w) => !o.words.has(w) && !old.includes(w)); if (novel.length >= 2) warnings.push('원고에 없던 낱말: ' + novel.slice(0, 4).join(', ')); }
+      if (countMatches(nw, SIMILE) > countMatches(old, SIMILE)) warnings.push('비유가 늘어남');
+      if (!e.why || !String(e.why).trim()) warnings.push('이유가 적혀 있지 않음');
+      taken.push(h);
+      ok.push({ old, new: nw, tag: e.tag || o.pass, why: e.why || '', paraId: h.paraId, paraIndex: h.paraIndex, start: h.start, end: h.end, warnings, pass: o.pass });
+    }
+    return { ok, rejected };
+  }
+  // 모델이 낸 인용(quote)이 원고에 실제로 있는지 확인한다. 없는 인용은 버린다.
+  function verifyQuotes(items, text, key) {
+    key = key || 'quote'; const ok = [], dropped = [];
+    (items || []).forEach((it) => { const q = String(it[key] || ''); if (q && String(text).includes(q)) ok.push(it); else dropped.push(it); });
+    return { ok, dropped };
+  }
+  // 수락된 제안을 버전의 사본에 적용한다. 원본 버전은 건드리지 않는다.
+  function applyProposals(ver, proposals) {
+    const chapters = cloneChapters(ver.chapters), failed = []; let applied = 0;
+    const byPara = new Map();
+    proposals.forEach((p) => { if (!byPara.has(p.paraId)) byPara.set(p.paraId, []); byPara.get(p.paraId).push(p); });
+    for (const ch of chapters) for (const para of ch.paragraphs) {
+      const ps = byPara.get(para.id); if (!ps) continue;
+      ps.sort((a, b) => b.start - a.start);
+      for (const p of ps) {
+        if (para.locked) { failed.push({ proposal: p, reason: '잠금 단락' }); continue; }
+        let at = para.text.slice(p.start, p.end) === p.old ? p.start : -1;
+        if (at < 0) { const first = para.text.indexOf(p.old); at = first >= 0 && para.text.indexOf(p.old, first + 1) < 0 ? first : -1; }
+        if (at < 0) { failed.push({ proposal: p, reason: '원문이 바뀌어 위치를 찾지 못함' }); continue; }
+        para.text = para.text.slice(0, at) + p.new + para.text.slice(at + p.old.length);
+        if (para.source !== 'ai') para.source = 'ai-edit';
+        applied++;
+      }
+    }
+    return { chapters, applied, failed };
+  }
+  // AI가 쓴 글자 비율(공백 제외 글자 수 기준)
+  function aiShare(ver) {
+    let n = 0, t = 0;
+    (ver.chapters || []).forEach((c) => c.paragraphs.forEach((p) => { const l = countNoSpaces(p.text); t += l; if (p.source === 'ai' || p.source === 'ai-edit') n += l; }));
+    return t ? Math.round((n / t) * 1000) / 1000 : 0;
+  }
+
   /* ───────────── 백업(JSON) ───────────── */
   const BACKUP_SCHEMA = 1;
   function makeBackup(works, versions, prefs) {
@@ -593,7 +662,7 @@
     newParagraph, newChapter, chapterText, versionText, isSceneBreak, reconcileParagraphs,
     makeVersion, cloneChapters, flattenParas, diffVersions, inlineDiff,
     findAll, replaceMatches, cleanText, headingOf, splitChapters,
-    toTxt, toMarkdown, privacyScan, sentencesOf, styleStats, styleFingerprint,
+    toTxt, toMarkdown, privacyScan, sentencesOf, styleStats, styleFingerprint, verifyEdits, verifyQuotes, applyProposals, aiShare, manuscriptWordSet, editKey,
     makeBackup, validateBackup, planImport, BACKUP_SCHEMA,
     docxXmlToParas, hwpxXmlToParas, decodeBytes, decodeXmlEntities,
   };

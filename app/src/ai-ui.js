@@ -38,7 +38,7 @@
     if (!sample) { toast('이 환경에서는 AI를 사용할 수 없습니다.', 'err'); return job; }
     const engine = A.createEngine({ sample, config: cfgFromPrefs() });
     try { const lim = sample.limits ? await sample.limits() : null; if (lim && lim.modelTiers) engine.setAllowedTiers(lim.modelTiers); } catch (e) { /* 기본 등급 사용 */ }
-    const runner = A.createRunner({ engine, storage: N.storage, getWork: N.getWork, updateWork: N.updateWork, onEvent: (e) => { U.job = e.job; refreshJobUI(); } });
+    const runner = A.createRunner({ engine, storage: N.storage, getWork: async (id) => { const w = await N.getWork(id); w.__profile = profileFor(w); return w; }, updateWork: N.updateWork, onEvent: (e) => { U.job = e.job; refreshJobUI(); } });
     U.running = true; U.runs = (U.runs || 0) + 1; U.ctl = new AbortController(); U.job = job; U.t0 = Date.now(); refreshJobUI(true);
     U.timer = setInterval(() => refreshJobUI(), 1000);
     try { await runner.run(job, { signal: U.ctl.signal }); }
@@ -125,6 +125,7 @@
         live ? h('button', { class: 'btn danger', onclick: () => U.ctl && U.ctl.abort() }, '중지') : null,
         !live && ['paused', 'failed', 'pending'].includes(job.status) ? h('button', { class: 'btn primary', onclick: () => execJob(job) }, '이어서 진행') : null,
         !live && failed ? h('button', { class: 'btn', onclick: async () => { failed.status = 'skipped'; await N.storage.putJob(job); execJob(job); } }, '이 단계 건너뛰고 계속') : null,
+        (job.state && job.state.proposals && job.state.proposals.length) ? h('button', { class: 'btn primary', onclick: () => openReview(job) }, `제안 검토 (${job.state.proposals.filter((p) => p.status === 'pending').length}개 대기)`) : null,
         ['done', 'partial'].includes(job.status) || job.report && job.resultVersionId ? h('button', { class: 'btn', onclick: () => showReport(job) }, '결과 보고서') : null,
         job.resultVersionId && !live ? h('button', { class: 'btn', onclick: () => openResult(job) }, job.type === 'convert' ? '변환본 열기' : '결과 버전 열기') : null),
       h('details', {}, h('summary', { class: 'small muted', style: 'cursor:pointer' }, '단계와 호출 기록'),
@@ -134,7 +135,7 @@
   async function openResult(job) {
     const v = await N.storage.getVersion(job.resultVersionId); if (!v) { toast('결과 버전을 찾을 수 없습니다.', 'err'); return; }
     if (v.workId !== (S.work && S.work.id)) { await N.openWork(v.workId); return; }
-    await N.openVersion(v.id);
+    await N.openVersion(v.id); N.go('write');
   }
 
   /* ───────────── 설정 카드 ───────────── */
@@ -363,7 +364,7 @@
   function uiState() {
     if (U.ui.workId !== S.work.id) {
       const p = aiPrefs(), ai = !!S.work.aiGenerated; const auto = ai ? '적극형' : p.automation;
-      U.ui = { workId: S.work.id, rev: { level: AUTO_LEVEL[auto], automation: auto, loop: true, loopMax: p.loopMax, extra: '', scopeAll: true, scope: new Set(), base: S.ver.id }, one: { automation: auto, loop: true, loopMax: p.loopMax, base: S.ver.id }, conv: { dir: S.work.format === 'script' ? 'script2novel' : 'novel2script', format: SCRIPT_FORMATS[1], mode: MODES[0][0], minutes: 20, scenes: 12, chars: 0, title: '', base: S.ver.id }, judge: { base: S.ver.id, chance: false } };
+      U.ui = { workId: S.work.id, rev: { level: AUTO_LEVEL[auto], automation: auto, loop: true, loopMax: p.loopMax, extra: '', scopeAll: true, scope: new Set(), base: S.ver.id }, one: { automation: auto, loop: true, loopMax: p.loopMax, base: S.ver.id }, conv: { dir: S.work.format === 'script' ? 'script2novel' : 'novel2script', format: SCRIPT_FORMATS[1], mode: MODES[0][0], minutes: 20, scenes: 12, chars: 0, title: '', base: S.ver.id }, judge: { base: S.ver.id, chance: false }, edits: { base: S.ver.id, passes: new Set(Object.keys(P.PASSES).filter((k) => P.PASSES[k].default)), maxEdits: 8, scopeAll: true, scope: new Set() }, proof: { base: S.ver.id } };
     }
     return U.ui;
   }
@@ -373,9 +374,9 @@
     const jobsEl = h('div', { class: 'stack' }), slot = h('div', { 'data-jobslot': w.id }, U.job && U.job.workId === w.id ? jobPanel(U.job) : null);
     main.append(h('div', { class: 'page-head' }, h('h1', {}, 'AI 작업실'), h('div', { class: 'small muted' }, `${w.title} · 현재 버전 ${S.ver.label}${S.ver.frozen ? '(고정)' : ''}`)), availBanner(),
       h('div', { class: 'banner info' }, 'AI 작업은 모두 새 버전으로 저장되고 원본은 바뀌지 않습니다. 작업 직전에 기준 버전을 자동으로 고정합니다. 잠금한 단락은 바꾸지 않습니다.'), slot,
-      h('div', { class: 'cols', style: 'margin-top:12px;align-items:start' }, await reviseCard(ui), await oneclickCard(ui), await convertCard(ui), await judgeCard(ui)),
+      h('div', { class: 'cols', style: 'margin-top:12px;align-items:start' }, await editsCard(ui), await reviseCard(ui), await proofCard(ui), await oneclickCard(ui), await convertCard(ui), await judgeCard(ui)),
       h('div', { class: 'card stack', style: 'margin-top:14px' }, h('h2', {}, '작업 목록'), jobsEl),
-      h('p', { class: 'small muted' }, '이번 버전에 없는 것: AI 교열 단독 실행, 장면별 AI 작업실, 장르 전환, 결말 재구성(다음 단계). 원클릭 완성에는 교열이 포함되어 있습니다.'));
+      h('p', { class: 'small muted' }, '장면별 AI 작업은 “집필 공간”의 [장면 AI 작업] 버튼에서 실행합니다. 결말 재구성은 [장면 AI 작업]의 “장면 재구성/전체 재작성”을 마지막 장면에 쓰세요.'));
     await drawJobs(jobsEl);
   }
   async function drawJobs(el) {
@@ -522,7 +523,9 @@
       if (r.lengths) body.push(sec('분량', h('div', { class: 'small' }, `목표 ${fmt(r.target)}자 → 실제 ${fmt(r.final.chars)}자 (${Math.round(r.final.ratio * 100)}%)`), h('table', { class: 'tbl', style: 'min-width:0' }, h('thead', {}, h('tr', {}, h('th', {}, '장'), h('th', { class: 'num' }, '목표'), h('th', { class: 'num' }, '실제'))), h('tbody', {}, r.lengths.map((l) => h('tr', {}, h('td', {}, l.chapter + '장'), h('td', { class: 'num' }, fmt(l.target)), h('td', { class: 'num' }, fmt(l.actual))))))));
       if (r.reviews) body.push(sec('자동 검토', h('table', { class: 'tbl', style: 'min-width:0' }, h('thead', {}, h('tr', {}, h('th', {}, '장'), h('th', { class: 'num' }, '지적'), h('th', { class: 'num' }, '중요 이상'), h('th', {}, '반영'))), h('tbody', {}, r.reviews.filter(Boolean).map((x) => h('tr', {}, h('td', {}, x.chapter + '장'), h('td', { class: 'num' }, x.issues), h('td', { class: 'num' }, x.serious), h('td', {}, x.fixed ? '새 판에 반영' : x.serious ? '반영 못함' : '-')))))));
     }
-    if (job.type === 'revise' || job.type === 'oneclick') reviseSections(job, body);
+    if (job.type === 'edits') body.push(sec('개고 제안', h('div', {}, r.verifyNote || ''), h('div', { class: 'small muted' }, Object.entries(r.byPass || {}).map(([k, n]) => `${k} ${n}개`).join(' · ')), r.appliedCount ? h('div', { class: 'small' }, `지금까지 적용한 제안 ${r.appliedCount}곳`) : null, h('button', { class: 'btn primary', onclick: () => { document.querySelectorAll('.modal-bg').forEach((e) => e.remove()); openReview(job); } }, '제안 검토 화면으로')));
+    if (job.type === 'proofread' && job.state.proposals && job.state.proposals.length) body.push(h('button', { class: 'btn primary', onclick: () => { document.querySelectorAll('.modal-bg').forEach((e) => e.remove()); openReview(job); } }, `권장·작가 확인 제안 ${job.state.proposals.length}개 검토`));
+    if (job.type === 'revise' || job.type === 'oneclick' || job.type === 'proofread') reviseSections(job, body);
     if (job.type === 'convert') {
       body.push(sec('결과', h('div', {}, `변환본 ${fmt((r.final || {}).chars)}자` + (r.final && r.final.scenes ? ` · 장면 ${r.final.scenes}개` : '')), job.state && job.state.newWorkId ? h('button', { class: 'btn', onclick: () => N.openWork(job.state.newWorkId) }, '변환본 작품 열기') : null));
       if ((r.coreChanges || []).length) body.push(sec('핵심 사건·인물 관계를 바꾼 곳', h('ul', { style: 'margin:0;padding-left:18px' }, r.coreChanges.map((c) => h('li', {}, `${c.target} ← ${c.source}: ${c.note || '변경'}`)))));
@@ -548,10 +551,207 @@
     if (r.judge) body.push(sec('최종 심사위원 평가', judgeEl(r.judge, { chance: false })));
   }
 
+  /* ───────────── 문체 프로필 ───────────── */
+  function profileList() {
+    const p = S.prefs;
+    if (!p.profiles) { p.profiles = [{ id: 'mine', name: '내 프로필 (작가 기본)', text: P.AUTHOR_PROFILE_DEFAULT }, { id: 'realism', name: '한국적 현실주의 (기본 지침)', text: P.STYLE_PRESETS['한국적 현실주의'], builtin: true }]; p.defaultProfile = 'mine'; }
+    return p.profiles;
+  }
+  function profileFor(work) { const list = profileList(); const id = (work && work.profileId) || S.prefs.defaultProfile; return (list.find((x) => x.id === id) || list[0]).text; }
+  function profileSelect(w, save) {
+    const list = profileList();
+    return h('label', { class: 'fld' }, '이 작품의 작가 프로필 (비우면 기본 프로필)', h('select', { 'aria-label': '작품 프로필', onchange: (e) => { w.profileId = e.target.value || null; save(); } }, [h('option', { value: '' }, '기본 프로필 사용')].concat(list.map((x) => h('option', { value: x.id, selected: w.profileId === x.id }, x.name)))));
+  }
+  async function renderProfiles(main) {
+    const list = profileList(); if (!U.ui.profSel || !list.some((x) => x.id === U.ui.profSel)) U.ui.profSel = S.prefs.defaultProfile || list[0].id;
+    const cur = list.find((x) => x.id === U.ui.profSel);
+    const name = h('input', { type: 'text', value: cur.name, 'aria-label': '프로필 이름', disabled: !!cur.builtin }), text = h('textarea', { class: 'field', rows: 12, 'aria-label': '프로필 내용' }); text.value = cur.text;
+    const save = () => { cur.name = name.value || cur.name; cur.text = text.value; savePrefs(); };
+    name.addEventListener('input', save); text.addEventListener('input', save);
+    main.append(h('div', { class: 'page-head' }, h('h1', {}, '문체 프로필'), h('div', { class: 'small muted' }, '“어떤 글을 좋아하고 무엇을 싫어하는가”를 적어 두면 AI의 개고 제안·집필에 그대로 들어갑니다.')),
+      h('div', { class: 'grid2', style: 'align-items:start' },
+        h('div', { class: 'card stack' }, h('h2', {}, '프로필 목록'), h('div', { class: 'list' }, list.map((x) => h('div', { class: 'row hit' + (x.id === cur.id ? ' cur' : ''), onclick: () => { U.ui.profSel = x.id; N.render(); } }, h('div', { class: 'grow' }, h('div', { class: 't' }, x.name), h('div', { class: 'small muted' }, (x.id === S.prefs.defaultProfile ? '기본 프로필 · ' : '') + (x.builtin ? '기본 제공' : '직접 만듦'))))),
+          h('div', { class: 'btn-row' }, h('button', { class: 'btn', onclick: () => { const id = 'p_' + Date.now().toString(36); list.push({ id, name: '새 프로필', text: '' }); U.ui.profSel = id; savePrefs(); N.render(); } }, '새 프로필'), h('button', { class: 'btn', onclick: () => { const id = 'p_' + Date.now().toString(36); list.push({ id, name: cur.name + ' 복사본', text: cur.text }); U.ui.profSel = id; savePrefs(); N.render(); } }, '복제'))),
+          h('div', { class: 'small muted' }, '작품마다 다른 프로필을 쓸 수 있습니다(“작품 정보” 탭). 이 작품에서 평소와 다른 문체를 시도하면 그 작품의 프로필이 우선합니다.')),
+        h('div', { class: 'card stack' }, h('h2', {}, '프로필 편집'), h('label', { class: 'fld' }, '이름', name), h('label', { class: 'fld' }, '내용 (한 줄에 하나씩, 구체적으로)', text),
+          h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', disabled: S.prefs.defaultProfile === cur.id, onclick: () => { S.prefs.defaultProfile = cur.id; savePrefs(); N.render(); } }, '기본 프로필로 지정'), !cur.builtin && list.length > 1 ? h('button', { class: 'btn danger', onclick: async () => { if (await askConfirm({ title: '프로필 삭제', message: `“${cur.name}”을(를) 삭제합니다.`, confirmText: '삭제', danger: true })) { S.prefs.profiles = list.filter((x) => x.id !== cur.id); if (S.prefs.defaultProfile === cur.id) S.prefs.defaultProfile = S.prefs.profiles[0].id; savePrefs(); N.render(); } } }, '삭제') : null),
+          h('details', {}, h('summary', { class: 'small', style: 'cursor:pointer' }, '프로필과 상관없이 항상 적용되는 점검 항목(AI식 문장·서사 10가지)'), h('ol', { class: 'small', style: 'margin:6px 0;padding-left:20px' }, P.AI_TELLS.map((t) => h('li', {}, t))), h('div', { class: 'small muted' }, P.AI_TELLS_NOTE || '이 목록은 무조건 삭제하라는 규칙이 아니라, 그 장치가 작품에서 실제로 기능하는지 따져 보는 기준입니다.')))));
+  }
+
+  /* ───────────── 개고 제안 카드 (편집자 모드) ───────────── */
+  async function editsCard(ui) {
+    const E = ui.edits, base = h('select', { 'aria-label': '기준 버전(제안)', onchange: (e) => { E.base = e.target.value; } }, await versionOptions(E.base)); syncSel(base, E, 'base');
+    const prof = profileFor(S.work);
+    const chBox = h('div', { class: 'btn-row', hidden: E.scopeAll }, S.ver.chapters.map((c, i) => h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: E.scope.has(i), onchange: (e) => { e.target.checked ? E.scope.add(i) : E.scope.delete(i); } }), `${i + 1}장`)));
+    return h('div', { class: 'card stack', style: 'border-color:var(--accent)' }, h('h2', {}, '개고 제안 — 한 줄씩 수락·거절 (편집자 모드)'),
+      h('div', { class: 'small muted' }, 'AI는 원고를 다시 쓰지 않고 “바꿀 문장 / 바꾼 문장 / 이유”만 냅니다. 코드가 원문이 정확히 한 번 나오는지, 잠금 단락을 건드리지 않는지, 문장을 늘리지 않는지 검증하고, 통과한 것만 검토 화면에 올라옵니다. 수락한 것만 새 버전에 적용됩니다.'),
+      h('label', { class: 'fld' }, '기준 버전', base),
+      h('div', { class: 'stack', style: 'gap:6px' }, h('div', { class: 'small muted' }, '패스 (목적마다 따로 돌립니다)'), ...Object.entries(P.PASSES).map(([k, d]) => h('label', { class: 'chk', style: 'align-items:flex-start' }, h('input', { type: 'checkbox', checked: E.passes.has(k), onchange: (e) => { e.target.checked ? E.passes.add(k) : E.passes.delete(k); } }), h('span', {}, h('b', {}, k), h('span', { class: 'small muted' }, ' — ' + d.goal))))),
+      h('div', { class: 'grid2' }, h('label', { class: 'fld' }, '한 패스·한 호출당 최대 제안 수', h('input', { type: 'number', min: 1, max: 20, value: E.maxEdits, 'aria-label': '최대 제안 수', onchange: (e) => { E.maxEdits = Math.min(20, Math.max(1, +e.target.value || 8)); } })), h('div', { class: 'small muted' }, '적게 고치는 쪽이 낫습니다. 기본 8곳.')),
+      h('label', { class: 'chk' }, h('input', { type: 'radio', name: 'editscope', checked: E.scopeAll, onchange: () => { E.scopeAll = true; chBox.hidden = true; } }), '작품 전체'), h('label', { class: 'chk' }, h('input', { type: 'radio', name: 'editscope', checked: !E.scopeAll, onchange: () => { E.scopeAll = false; chBox.hidden = false; } }), '선택한 장만'), chBox,
+      h('details', {}, h('summary', { class: 'small', style: 'cursor:pointer' }, '적용되는 작가 프로필 보기'), h('pre', { class: 'small', style: 'white-space:pre-wrap;margin:6px 0' }, prof), h('button', { class: 'btn sm', onclick: () => N.go('profiles') }, '프로필 편집')),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', disabled: U.running, onclick: runEdits }, '제안 만들기')));
+  }
+  async function runEdits() {
+    const ui = uiState(), E = ui.edits, w = S.work; if (U.running) return;
+    if (!E.passes.size) { toast('패스를 하나 이상 고르세요.', 'err'); return; }
+    if (!E.scopeAll && !E.scope.size) { toast('점검할 장을 하나 이상 고르세요.', 'err'); return; }
+    const base = await ensureFrozen(E.base || S.ver.id);
+    const scope = E.scopeAll ? base.chapters.map((_, i) => i) : [...E.scope].sort((a, b) => a - b);
+    const passes = Object.keys(P.PASSES).filter((k) => E.passes.has(k));
+    const job = A.buildJob('edits', w, { baseVersionId: base.id, passes, maxEdits: E.maxEdits, scope, profile: profileFor(w), chapterChars: chapterChars(base) }, { chapterCount: base.chapters.length });
+    await launch(job, { title: '개고 제안', target: `기준 “${base.label}” · ${scope.length}개 장 · 패스 ${passes.join(', ')}`, notes: ['이 작업은 원고를 바꾸지 않습니다. 검토 화면에서 한 줄씩 수락·거절하고, 수락한 것만 새 버전에 적용합니다.', `기준 버전 “${base.label}”은(는) 고정되어 그대로 보존됩니다.`, lockCount(base) ? `잠금한 단락 ${lockCount(base)}개는 제안 대상에서 제외됩니다.` : null].filter(Boolean) });
+    if (S.view === 'ai') N.render();
+  }
+  async function proofCard(ui) {
+    const Pr = ui.proof, base = h('select', { 'aria-label': '기준 버전(교열)', onchange: (e) => { Pr.base = e.target.value; } }, await versionOptions(Pr.base)); syncSel(base, Pr, 'base');
+    return h('div', { class: 'card stack' }, h('h2', {}, 'AI 자동 교열'),
+      h('div', { class: 'small muted' }, '맞춤법·띄어쓰기·문장부호·조사와 어미·오탈자·표기 일관성을 점검합니다. 명백한 오류(확정)는 새 교열본에 반영하고, 권장 표현과 작가 확인 사항은 한 줄씩 수락할 수 있는 제안으로 남깁니다. 의도적 비문·구어체·사투리·인물 말투는 고치지 않습니다.'),
+      h('div', { class: 'banner' }, 'AI의 판단이며 맞춤법 검사기가 아닙니다. 응모 전에는 사람이나 전문 검사기로 한 번 더 확인하세요. 원문에서 정확히 한 번만 찾아지는 항목만 반영합니다.'),
+      h('label', { class: 'fld' }, '기준 버전', base), h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', disabled: U.running, onclick: runProof }, '교열 시작')));
+  }
+  async function runProof() {
+    const ui = uiState(), Pr = ui.proof, w = S.work; if (U.running) return;
+    const base = await ensureFrozen(Pr.base || S.ver.id);
+    const job = A.buildJob('proofread', w, { baseVersionId: base.id, chapterChars: chapterChars(base) }, { chapterCount: base.chapters.length });
+    await launch(job, { title: 'AI 자동 교열', target: `기준 “${base.label}” · ${base.chapters.length}개 장`, notes: ['확정 오류는 새 버전(AI 교열)에 반영되고, 원본은 그대로 보존됩니다. 권장·작가 확인 항목은 제안으로 남습니다.'] });
+    if (S.view === 'ai') N.render();
+  }
+
+  /* ───────────── 제안 검토 화면 ───────────── */
+  async function openReview(job) { U.ui.review = { jobId: job.id, pass: '', status: '', sel: new Set() }; N.go('proposals'); }
+  const saveJobSoon = (() => { let t; return (job) => { clearTimeout(t); t = setTimeout(() => N.storage.putJob(job).catch(() => toast('제안 상태를 저장하지 못했습니다.', 'err')), 400); }; })();
+  async function renderReview(main) {
+    const R = U.ui.review; if (!R) { N.go('ai'); return; }
+    const job = (U.job && U.job.id === R.jobId) ? U.job : await N.storage.getJob(R.jobId); if (!job) { N.go('ai'); return; }
+    const baseId = job.report.proposalsBase || job.params.baseVersionId; const baseVer = await N.storage.getVersion(baseId);
+    const props = (job.state && job.state.proposals) || [];
+    const cnt = (st) => props.filter((p) => p.status === st).length;
+    const rep = job.report || {}, dg = rep.diagnosis;
+    const listEl = h('div', { class: 'stack' }), sumEl = h('div', { class: 'btn-row' });
+    const setStatus = async (ps, st) => {
+      for (const p of ps) {
+        const was = p.status; p.status = st;
+        if (st === 'rejected' && was !== 'rejected') await N.updateWork(job.workId, (w) => { w.rejectedEdits = (w.rejectedEdits || []).concat([{ old: p.old, new: p.origNew != null ? p.origNew : p.new, at: C.nowIso() }]).slice(-80); });
+        if (was === 'rejected' && st !== 'rejected') await N.updateWork(job.workId, (w) => { w.rejectedEdits = (w.rejectedEdits || []).filter((r) => !(r.old === p.old && r.new === (p.origNew != null ? p.origNew : p.new))); });
+      }
+      saveJobSoon(job); drawList(); drawSum();
+    };
+    const ctxOf = (p) => { const ch = baseVer && baseVer.chapters[p.chapter], para = ch && ch.paragraphs.find((x) => x.id === p.paraId); if (!para) return null; return { before: para.text.slice(Math.max(0, p.start - 24), p.start), old: para.text.slice(p.start, p.end), after: para.text.slice(p.end, p.end + 24) }; };
+    const card = (p, i) => {
+      const cx = ctxOf(p), nw = h('textarea', { class: 'field', rows: 2, 'aria-label': '수정안', placeholder: '(삭제)' }); nw.value = p.new;
+      nw.addEventListener('input', () => { if (p.origNew == null) p.origNew = p.new; p.new = nw.value; saveJobSoon(job); });
+      const st = p.status;
+      return h('div', { class: 'card stack', style: `gap:8px;padding:12px;${st === 'accepted' ? 'border-color:var(--ok)' : st === 'rejected' ? 'opacity:.6' : st === 'applied' ? 'opacity:.7' : ''}` },
+        h('div', { class: 'btn-row', style: 'justify-content:space-between' }, h('div', { class: 'btn-row' }, h('input', { type: 'checkbox', 'aria-label': '선택', checked: R.sel.has(p.id), disabled: st === 'applied', onchange: (e) => { e.target.checked ? R.sel.add(p.id) : R.sel.delete(p.id); drawSum(); } }), h('span', { class: 'small muted' }, `${p.chapter + 1}장 · ${p.paraIndex + 1}번째 단락`), h('span', { class: 'pill accent' }, p.tag || p.pass), p.level ? h('span', { class: 'pill warn' }, p.level) : null, ...(p.warnings || []).map((wn) => h('span', { class: 'pill warn' }, wn))),
+          h('span', { class: 'pill' + (st === 'accepted' ? ' accent' : '') }, { pending: '대기', accepted: '수락', rejected: '거절', applied: '적용됨' }[st])),
+        cx ? h('div', { class: 'ctx', style: 'font-family:var(--ed-font);line-height:1.8' }, cx.before, h('s', { style: 'background:var(--del-bg);color:var(--del-fg)' }, cx.old), cx.after) : h('div', { class: 'small muted' }, '(기준 버전에서 원문 위치를 찾을 수 없음)'),
+        h('label', { class: 'fld' }, '수정안 (직접 고쳐서 수락할 수 있습니다)', nw), h('div', { class: 'small' }, '이유: ' + (p.why || '(없음)')),
+        h('div', { class: 'btn-row' }, h('button', { class: 'btn sm primary', disabled: st === 'applied' || st === 'accepted', onclick: () => { if (nw.value !== p.new) { if (p.origNew == null) p.origNew = p.new; p.new = nw.value; } setStatus([p], 'accepted'); } }, '수락'), h('button', { class: 'btn sm', disabled: st === 'applied' || st === 'rejected', onclick: () => setStatus([p], 'rejected') }, '거절'), st === 'accepted' || st === 'rejected' ? h('button', { class: 'btn sm ghost', onclick: () => setStatus([p], 'pending') }, '대기로') : null));
+    };
+    const visible = () => props.filter((p) => (!R.pass || p.pass === R.pass) && (!R.status || p.status === R.status));
+    function drawList() {
+      const v = visible(); let last = -1; const out = [];
+      if (!v.length) out.push(h('div', { class: 'empty' }, props.length ? '조건에 맞는 제안이 없습니다.' : '검증을 통과한 제안이 없습니다. 원고가 깨끗하거나, 모델의 제안이 모두 검증에서 걸러졌습니다.'));
+      v.forEach((p, i) => { if (p.chapter !== last) { out.push(h('div', { class: 'small muted', style: 'margin-top:6px;font-weight:600' }, `${p.chapter + 1}장 ${(baseVer && baseVer.chapters[p.chapter] && baseVer.chapters[p.chapter].title) || ''}`)); last = p.chapter; } out.push(card(p, i)); });
+      listEl.replaceChildren(...out);
+    }
+    function drawSum() {
+      sumEl.replaceChildren(...[h('span', { class: 'pill' }, `대기 ${cnt('pending')}`), h('span', { class: 'pill accent' }, `수락 ${cnt('accepted')}`), h('span', { class: 'pill' }, `거절 ${cnt('rejected')}`), cnt('applied') ? h('span', { class: 'pill' }, `적용됨 ${cnt('applied')}`) : null].filter(Boolean));
+      const b = $('#applybtn'); if (b) { b.disabled = !cnt('accepted'); b.textContent = `수락한 ${cnt('accepted')}개를 적용해 새 버전 만들기`; }
+      const sb = $('#selinfo'); if (sb) sb.textContent = R.sel.size ? `${R.sel.size}개 선택됨` : '';
+    }
+    const passes = [...new Set(props.map((p) => p.pass))];
+    main.append(
+      h('div', { class: 'page-head' }, h('h1', {}, '제안 검토'), h('div', { class: 'btn-row' }, h('button', { class: 'btn', onclick: () => N.go('ai') }, 'AI 작업실로'), h('button', { class: 'btn', onclick: () => showReport(job) }, '작업 보고서'))),
+      h('div', { class: 'banner info' }, (rep.verifyNote || `제안 ${props.length}개`) + ` 기준 버전: “${baseVer ? baseVer.label : '?'}”. 한꺼번에 수락하도록 강요하지 않습니다. 하나씩 보고 고르세요.`),
+      rep.diagnosis || rep.rejectedCounts ? h('details', { class: 'card' }, h('summary', { style: 'cursor:pointer;font-weight:600' }, '진단과 검증 내역 (펼쳐 보기)'),
+        h('div', { class: 'stack', style: 'margin-top:10px' },
+          dg ? h('div', { class: 'small muted' }, dg.coverage) : null,
+          dg && dg.seedMap.length ? h('div', {}, h('div', { class: 'small muted' }, '씨와 거둠 지도 (거둬지지 않은 씨는 주황색)'), h('table', { class: 'tbl', style: 'min-width:0' }, h('thead', {}, h('tr', {}, h('th', {}, '심은 것'), h('th', {}, '거둔 곳'), h('th', {}, '메모'))), h('tbody', {}, dg.seedMap.map((x) => h('tr', { style: x.harvest ? '' : 'background:var(--warn-bg)' }, h('td', {}, x.seed), h('td', {}, x.harvest || '— 거둠 없음 —'), h('td', {}, x.note)))))) : null,
+          dg && dg.problems.length ? h('div', {}, h('div', { class: 'small muted' }, `진단된 문제 ${dg.problems.length}개 (인용이 원고에 실제로 있는 것만)`), h('ul', { class: 'small', style: 'margin:4px 0;padding-left:18px' }, dg.problems.slice(0, 40).map((x) => h('li', {}, `[${x.category}] “${x.quote}” ${x.note || ''}${x.count ? ` (${x.count}회)` : ''}`)))) : null,
+          rep.droppedQuotes ? h('div', { class: 'small muted' }, `원고에 없는 인용이어서 버린 진단 항목 ${rep.droppedQuotes}개`) : null,
+          rep.rejectedCounts ? h('div', {}, h('div', { class: 'small muted' }, `코드 검증에서 걸러진 제안 (모델이 낸 ${rep.modelEdits || 0}개 중)`), h('ul', { class: 'small', style: 'margin:4px 0;padding-left:18px' }, Object.entries(rep.rejectedCounts).map(([k, n]) => h('li', {}, `${k}: ${n}개`)))) : null,
+          (rep.notes || []).length ? h('div', {}, h('div', { class: 'small muted' }, '모델이 남긴 메모 (확인 필요 등)'), h('ul', { class: 'small', style: 'margin:4px 0;padding-left:18px' }, rep.notes.map((n) => h('li', {}, `${n.chapter}장 ${n.pass}: ${n.note}`)))) : null)) : null,
+      h('div', { class: 'card stack', style: 'position:sticky;top:calc(56px + env(safe-area-inset-top,0px));z-index:4' },
+        h('div', { class: 'btn-row', style: 'justify-content:space-between' }, sumEl, h('button', { class: 'btn primary', id: 'applybtn', onclick: () => applyAccepted(job, baseVer, props) }, '적용')),
+        h('div', { class: 'btn-row' },
+          h('label', { class: 'fld', style: 'flex-direction:row;align-items:center;gap:6px' }, '패스', h('select', { 'aria-label': '패스 필터', style: 'width:auto', onchange: (e) => { R.pass = e.target.value; drawList(); } }, [h('option', { value: '' }, '전체')].concat(passes.map((x) => h('option', { value: x, selected: R.pass === x }, x))))),
+          h('label', { class: 'fld', style: 'flex-direction:row;align-items:center;gap:6px' }, '상태', h('select', { 'aria-label': '상태 필터', style: 'width:auto', onchange: (e) => { R.status = e.target.value; drawList(); } }, [['', '전체'], ['pending', '대기'], ['accepted', '수락'], ['rejected', '거절'], ['applied', '적용됨']].map(([v, t]) => h('option', { value: v, selected: R.status === v }, t)))),
+          h('button', { class: 'btn sm', onclick: () => { visible().filter((p) => p.status !== 'applied').forEach((p) => R.sel.add(p.id)); drawList(); drawSum(); } }, '보이는 것 전체 선택'), h('button', { class: 'btn sm', onclick: () => { R.sel.clear(); drawList(); drawSum(); } }, '선택 해제'), h('span', { class: 'small muted', id: 'selinfo' }),
+          h('button', { class: 'btn sm', onclick: () => setStatus(props.filter((p) => R.sel.has(p.id) && p.status !== 'applied'), 'accepted').then(() => { R.sel.clear(); drawList(); }) }, '선택한 것 수락'), h('button', { class: 'btn sm', onclick: () => setStatus(props.filter((p) => R.sel.has(p.id) && p.status !== 'applied'), 'rejected').then(() => { R.sel.clear(); drawList(); }) }, '선택한 것 거절'))),
+      listEl);
+    drawList(); drawSum();
+  }
+  async function applyAccepted(job, baseVer, props) {
+    const acc = props.filter((p) => p.status === 'accepted'); if (!acc.length) return;
+    await N.flushAndSave();
+    let target = job.state.appliedVersionId ? await N.storage.getVersion(job.state.appliedVersionId) : null;
+    let src = baseVer, inPlace = false;
+    if (target && !target.frozen) { src = target; inPlace = true; }
+    if (S.ver && S.ver.id === (target && target.id) && inPlace) src = S.ver;
+    const r = C.applyProposals(src, acc.map((p) => ({ paraId: p.paraId, start: p.start, end: p.end, old: p.old, new: p.new })));
+    if (!r.applied) { toast('적용할 수 있는 제안이 없습니다. ' + (r.failed[0] ? r.failed[0].reason : ''), 'err'); return; }
+    const failedIds = new Set(r.failed.map((f) => acc.find((p) => p.paraId === f.proposal.paraId && p.old === f.proposal.old).id));
+    let ver;
+    if (inPlace) { src.chapters = r.chapters; ver = src; if (S.ver && S.ver.id === ver.id) { S.cc = new Map(); N.markDirty(); await N.saveNow(); } else { ver.updatedAt = C.nowIso(); await N.storage.putVersion(ver); } }
+    else { ver = C.makeVersion({ workId: job.workId, parentId: baseVer.id, label: `제안 적용 (${stampS()})`, kind: '작업본', note: `${A.TYPE_LABEL[job.type]}에서 수락한 ${r.applied}곳을 적용`, chapters: r.chapters }); await N.storage.putVersion(ver); }
+    acc.forEach((p) => { if (!failedIds.has(p.id)) p.status = 'applied'; });
+    job.state.appliedVersionId = ver.id; job.report.appliedCount = (job.report.appliedCount || 0) + r.applied; await N.storage.putJob(job);
+    await N.afterVersionsChanged();
+    modal({ title: '적용했습니다', body: [h('div', {}, `${r.applied}곳을 “${ver.label}”에 적용했습니다. 기준 버전은 그대로 보존됩니다.`), r.failed.length ? h('div', { class: 'banner' }, `${r.failed.length}곳은 적용하지 못했습니다(${[...new Set(r.failed.map((f) => f.reason))].join(', ')}). 수락 상태로 남아 있습니다.`) : null],
+      actions: (close) => [h('button', { class: 'btn', onclick: () => { close(); N.render(); } }, '계속 검토'), h('button', { class: 'btn', onclick: () => { close(); S.cmpA = baseVer.id; S.cmpB = ver.id; N.go('compare'); } }, '기준과 비교'), h('button', { class: 'btn primary', onclick: async () => { close(); await N.openVersion(ver.id); N.go('write'); } }, '열어서 계속 쓰기')] });
+  }
+  const stampS = () => { const d = new Date(); return `${d.getMonth() + 1}/${d.getDate()} ${N.pad(d.getHours())}:${N.pad(d.getMinutes())}`; };
+
+  /* ───────────── 장면 AI 작업 (집필 공간에서) ───────────── */
+  async function sceneDialog() {
+    if (S.view !== 'write') return; if (U.running) { toast('다른 AI 작업이 진행 중입니다.', 'err'); return; }
+    await getSample(); if (!U.sample) { toast('이 환경에서는 AI를 사용할 수 없습니다.', 'err'); return; }
+    await N.flushAndSave();
+    const ta = $('#editor'), ch = S.ver.chapters[S.chIdx];
+    const idxOf = (pos) => ta.value.slice(0, pos).split('\n').length - 1;
+    let a = idxOf(ta.selectionStart), b = idxOf(ta.selectionEnd);
+    if (a === b) { while (a > 0 && !C.isSceneBreak(ch.paragraphs[a - 1].text)) a--; while (b < ch.paragraphs.length - 1 && !C.isSceneBreak(ch.paragraphs[b + 1].text)) b++; }
+    let st = { start: a, end: b, action: '', pov: '1인칭 주인공', extra: '', result: null, busy: false };
+    const body = h('div', { class: 'stack' }); let ctl = null;
+    const preview = () => { const p = ch.paragraphs; return `${st.start + 1}~${st.end + 1}번째 단락 (${fmt(C.countWithSpaces(p.slice(st.start, st.end + 1).map((x) => x.text).join('')))}자): “${(p[st.start] && p[st.start].text || '').slice(0, 30)}…”`; };
+    const m = modal({ title: '장면 AI 작업', wide: true, noBgClose: true, onClose: () => { if (ctl) ctl.abort(); }, body, actions: (close) => h('button', { class: 'btn', onclick: () => close() }, '닫기') });
+    const draw = () => {
+      body.replaceChildren();
+      if (st.busy) { body.append(h('div', {}, `“${st.action}” 작업 중입니다… (호출 2회: 다시 쓰기 + 앞뒤 연결 점검)`), h('button', { class: 'btn danger', onclick: () => ctl && ctl.abort() }, '중지')); return; }
+      if (st.result) { const r = st.result; body.append(
+        h('div', { class: 'small muted' }, `${st.action} · 분량 ${Math.round(r.drift.ratio * 100)}% · 결과는 적용하기 전까지 원고에 반영되지 않습니다.`),
+        h('div', { class: 'diff', style: 'grid-template-columns:1fr 1fr' }, h('div', { class: 'h' }, '원래'), h('div', { class: 'h' }, '고친 결과'), h('div', { class: 'c l del' }, r.before), h('div', { class: 'c r add' }, r.after)),
+        r.link.ok === true ? h('div', { class: 'banner info' }, '앞뒤 장면과의 연결 점검: 문제를 찾지 못했습니다.') : r.link.ok === null ? h('div', { class: 'banner' }, '앞뒤 연결을 점검하지 못했습니다(' + (r.link.error || '오류') + '). 직접 읽어 확인하세요.') : h('div', { class: 'banner' }, h('div', {}, h('b', {}, '앞뒤 연결에서 걸리는 점')), h('ul', { style: 'margin:4px 0 0;padding-left:18px' }, r.link.issues.map((i) => h('li', {}, `${i.where}: ${i.problem}`)))),
+        h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onclick: () => { apply(r); m.close(); } }, '적용 (작업 되돌리기 가능)'), h('button', { class: 'btn', onclick: () => { st.result = null; draw(); } }, '다른 작업 고르기'), h('button', { class: 'btn', onclick: () => run(st.action) }, '다시 시도'))); return; }
+      const num = (k, label) => h('label', { class: 'fld' }, label, h('input', { type: 'number', min: 1, max: ch.paragraphs.length, value: st[k] + 1, 'aria-label': label, onchange: (e) => { st[k] = Math.min(ch.paragraphs.length - 1, Math.max(0, (+e.target.value || 1) - 1)); if (st.start > st.end) st.end = st.start; pv.textContent = preview(); } }));
+      const pv = h('div', { class: 'small' }, preview());
+      body.append(h('div', { class: 'small muted' }, '커서가 있는 장면(*** 구분선 사이) 또는 선택한 단락이 대상입니다. 범위를 바꿀 수 있습니다.'), h('div', { class: 'grid2' }, num('start', '시작 단락'), num('end', '끝 단락')), pv,
+        h('label', { class: 'fld' }, '시점 변경용 목표 시점', h('select', { 'aria-label': '목표 시점', onchange: (e) => { st.pov = e.target.value; } }, POVS.map((x) => h('option', { value: x, selected: st.pov === x }, x)))),
+        h('label', { class: 'fld' }, '추가 지시 (선택)', h('input', { type: 'text', value: st.extra, 'aria-label': '추가 지시', placeholder: '예: 용석의 말투를 더 느리게', oninput: (e) => { st.extra = e.target.value; } })),
+        h('div', { class: 'btn-row' }, Object.keys(P.SCENE_ACTIONS).map((k) => h('button', { class: 'btn', title: P.SCENE_ACTIONS[k], onclick: () => run(k) }, k))));
+    };
+    async function run(action) {
+      st.action = action; st.busy = true; st.result = null; draw(); ctl = new AbortController();
+      try {
+        const engine = A.createEngine({ sample: U.sample, config: cfgFromPrefs() });
+        const work = await N.getWork(S.work.id); work.__profile = profileFor(work);
+        st.result = await A.sceneAction(engine, work, { ver: S.ver, chapterIndex: S.chIdx, start: st.start, end: st.end, action, pov: action === '시점 변경' ? st.pov : '', extra: st.extra, signal: ctl.signal });
+      } catch (e) { if (e.code !== 'cancelled') toast('장면 작업에 실패했습니다: ' + (e.message || e.code), 'err'); }
+      ctl = null; st.busy = false; draw();
+    }
+    function apply(r) {
+      N.prepEdit(); const c = S.ver.chapters[S.chIdx], old = c.paragraphs.slice(st.start, st.end + 1);
+      const fresh = A.applyRevision(old, r.after, 'ai'); c.paragraphs.splice(st.start, old.length, ...fresh); N.afterStructureChange(); toast('장면을 적용했습니다. (작업 되돌리기 가능)');
+    }
+    draw();
+  }
+
   /* ───────────── 시작 ───────────── */
   async function init(app) {
     N = app; ({ h, S, $, fmt, fmtDate, toast, modal, askConfirm } = app);
-    N.views.wizard = renderWizard; N.views.ai = renderAI; N.hooks.settings.push(settingsCard); N.hooks.afterRender = updateStrip;
+    N.views.wizard = renderWizard; N.views.ai = renderAI; N.views.proposals = renderReview; N.views.profiles = renderProfiles; N.sceneDialog = sceneDialog; N.profileSelect = profileSelect; N.hooks.settings.push(settingsCard); N.hooks.afterRender = updateStrip;
     const jobs = await N.storage.listJobs();
     for (const j of jobs) if (j.status === 'running') { j.status = 'paused'; j.pausedReason = '창을 닫거나 새로고침해 중단되었습니다. 저장된 지점부터 이어서 진행할 수 있습니다.'; j.steps.forEach((s) => { if (s.status === 'running') s.status = 'pending'; }); await N.storage.putJob(j); }
     const m = await N.storage.getMeta('wizard'); if (m) U.wiz = Object.assign(U.wiz, m);

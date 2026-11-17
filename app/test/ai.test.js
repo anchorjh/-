@@ -373,3 +373,88 @@ test('설계: 출력이 형식에 안 맞으면 더 짧은 형식으로 한 번 
   assert.equal(j.status, 'done'); assert.ok(j.report.warnings.some((x) => /더 짧은 형식/.test(x)));
   assert.match(env.sample.mock.calls.filter((c) => c.kind === 'design').pop().prompt, /최대한 짧게/);
 });
+
+/* ───────── 3단계: 제안(편집자 모드)·교열·장면·고증 ───────── */
+async function editsSetup(passes, text, mockOpts) {
+  const env = setup(mockOpts || {}); const work = newWork({ __profile: P.AUTHOR_PROFILE_DEFAULT }); await env.storage.putWork(work);
+  const base = await baseVersion(env, work, text || '', { chapters: [C.newChapter('제1장', ['그는 서랍을 그대로 두었다. 장부를 그대로 두었다.', '그녀가 웃었다. 그것이 사랑이라는 것을 알았다.', '잠금 문단. 그대로 두었다.', '편지를 꺼내 보지 않았다.'].join('\n')), C.newChapter('제2장', '둘째 장이다. 장갑을 벗었다.')] });
+  base.chapters[0].paragraphs[2].locked = true; await env.storage.putVersion(base);
+  const job = A.buildJob('edits', work, { baseVersionId: base.id, passes, maxEdits: 8, loop: { on: false } }, { chapterCount: 2 }); await env.storage.putJob(job);
+  return { env, work, base, job };
+}
+test('제안: 진단의 가짜 인용은 코드가 버리고, 모델이 낸 edits는 검증을 통과한 것만 남는다', async () => {
+  const { env, base, job } = await editsSetup(['해설', '주저동작']);
+  const before = JSON.stringify(await env.storage.getVersion(base.id));
+  await env.runner.run(job); assert.equal(job.status, 'done', job.pausedReason);
+  assert.equal(JSON.stringify(await env.storage.getVersion(base.id)), before, '원본 불변'); assert.equal(job.resultVersionId, null, '제안 작업은 버전을 만들지 않는다');
+  const dg = job.report.diagnosis; assert.ok(dg.problems.every((p) => C.versionText(base).includes(p.quote)), '진단 인용은 모두 원고에 있다'); assert.ok(job.report.droppedQuotes >= 1, '가짜 인용 폐기: ' + job.report.droppedQuotes);
+  assert.equal(dg.seedMap.find((x) => x.seed === '장부').harvest, null, '확인되지 않는 거둠은 비운다'); assert.match(dg.coverage, /전체를 한 번에/);
+  const props = job.state.proposals;
+  assert.ok(props.some((p) => p.pass === '해설' && /라는 것을 알았다/.test(p.old) && p.new === ''), '해설 제안');
+  assert.ok(!props.some((p) => p.old === '그대로 두었다'), '여러 번 나오는(모호한) old 는 걸러진다');
+  assert.ok(props.some((p) => /꺼내 보지 않았다/.test(p.old) && p.new === '서랍을 닫았다.'), '주저동작 제안');
+  const reasons = job.report.rejectedCounts; assert.ok(reasons['원고에서 찾을 수 없음'] >= 2 && reasons['원고에 여러 번 나옴(앞뒤 글자를 늘려야 함)'] >= 1, JSON.stringify(reasons));
+  assert.match(job.report.verifyNote, /코드 검증을 통과한/);
+  props.forEach((p) => assert.equal(p.status, 'pending'));
+  const applied = C.applyProposals(base, props); assert.equal(applied.failed.length, 0); assert.ok(!C.versionText({ chapters: applied.chapters }).includes('라는 것을 알았다'));
+  assert.ok(C.chapterText(applied.chapters[0]).includes('잠금 문단. 그대로 두었다.'), '잠금 단락은 손대지 않음');
+});
+test('제안: 작가가 거절한 제안은 프롬프트에 알리고, 다시 내도 코드가 걸러낸다', async () => {
+  const { env, work, job } = await editsSetup(['해설']);
+  const rej = [{ old: '그녀가 웃었다. 그것이 사랑이라는 것을 알았다.'.slice(8), new: '', at: C.nowIso() }];
+  const hit = /[^.\n]*라는 것을 알았다\./.exec('그녀가 웃었다. 그것이 사랑이라는 것을 알았다.')[0].trim();
+  await env.storage.putWork(Object.assign(await env.storage.getWork(work.id), { rejectedEdits: [{ old: hit, new: '', at: C.nowIso() }] }));
+  await env.runner.run(job);
+  assert.ok(!job.state.proposals.some((p) => p.old === hit), '거절한 제안은 남지 않는다'); assert.ok(job.report.rejectedCounts['이전에 거절한 제안'] >= 1);
+  assert.match(env.sample.mock.calls.find((c) => c.kind === 'edits').prompt, /AUTHOR_ALREADY_REJECTED/);
+});
+test('제안: 프롬프트에 작가 프로필과 절대 규칙·최대 곳수가 들어간다', async () => {
+  const { env, job } = await editsSetup(['반복']); await env.runner.run(job);
+  const p = env.sample.mock.calls.find((c) => c.kind === 'edits').prompt;
+  assert.match(p, /생경한 단어, 고유어, 토착어/); assert.match(p, /원고 전체를 다시 쓰지 마라/); assert.match(p, /최대 8곳/); assert.match(p, /\{"edits":\[/);
+});
+test('제안: 패스는 늘리는 방향으로 고치면 거절(해설·반복은 문장을 늘릴 수 없다)', async () => {
+  const { env, job } = await editsSetup(['해설']);
+  env.sample.mock.editsHook = (pass, t) => ({ edits: [{ old: '둘째 장이다.', new: '둘째 장이다. 아주 길게 설명을 덧붙인 새 문장이 이어진다.', tag: pass, why: '덧붙임' }], notes: [] });
+  await env.runner.run(job); assert.equal(job.state.proposals.length, 0); assert.ok(job.report.rejectedCounts['이 패스는 문장을 늘릴 수 없음'] >= 1);
+});
+test('교열 단독: 확정 오류만 새 교열본에 반영하고, 권장·작가확인은 제안으로 남긴다', async () => {
+  const env = setup({}); const work = newWork(); await env.storage.putWork(work);
+  const base = await baseVersion(env, work, '', { chapters: [C.newChapter('1장', '그렇게 해 주면 되요 하고 말했다.\n그렇게 말했다고 한다.\n끝.')] });
+  const job = A.buildJob('proofread', work, { baseVersionId: base.id }, { chapterCount: 1 }); await env.storage.putJob(job);
+  const before = JSON.stringify(await env.storage.getVersion(base.id));
+  await env.runner.run(job); assert.equal(job.status, 'done', job.pausedReason);
+  assert.equal(JSON.stringify(await env.storage.getVersion(base.id)), before);
+  const res = await env.storage.getVersion(job.resultVersionId); assert.equal(res.kind, 'AI 교열'); assert.match(C.versionText(res), /돼요/); assert.ok(!/되요/.test(C.versionText(res)));
+  const props = job.state.proposals; assert.equal(props.length, 1); assert.equal(props[0].level, '권장'); assert.equal(props[0].status, 'pending');
+  const a = C.applyProposals(res, props); assert.match(C.versionText({ chapters: a.chapters }), /그리 말했다/);
+  assert.equal(job.report.proposalsBase, res.id); assert.ok(job.report.diff.mod >= 1);
+});
+test('장면 작업: 잠금 단락은 표지로 지켜 복원, 앞뒤 연결 점검 결과를 함께 돌려준다', async () => {
+  const env = setup({}); const work = newWork();
+  const ver = C.makeVersion({ workId: work.id, chapters: [C.newChapter('1', ['앞 문단이다.', '장면 첫 문단이다.', '잠긴 문단이다.', '장면 끝 문단이다.', '뒤 문단이다.'].join('\n'))] }); ver.chapters[0].paragraphs[2].locked = true;
+  const r = await A.sceneAction(env.engine, work, { ver, chapterIndex: 0, start: 1, end: 3, action: '장면 확장' });
+  assert.ok(r.after.includes('잠긴 문단이다.') && r.after.includes('마지막 줄이 하나 더해졌다.')); assert.equal(r.link.ok, true);
+  const prompt = env.sample.mock.calls.find((c) => c.kind === 'scene').prompt; assert.match(prompt, /⟦잠금1⟧/); assert.ok(!/<SCENE>[\s\S]*잠긴 문단이다[\s\S]*<\/SCENE>/.test(prompt), '잠긴 문단 원문은 모델에 보내지 않는다'); assert.match(prompt, /앞 문단이다/);
+  env.sample.mock.sceneHook = (t) => t.replace(/⟦잠금\d+⟧\n?/g, '');
+  await assert.rejects(() => A.sceneAction(env.engine, work, { ver, chapterIndex: 0, start: 1, end: 3, action: '장면 압축' }), (e) => /잠금/.test(e.message));
+});
+test('장면 작업: 연결 점검이 실패해도 결과는 돌려주고 점검 못 했음을 표시', async () => {
+  const env = setup({ script: [{ kind: 'linkCheck', code: 'rate_limited', times: 9 }] });
+  const ver = C.makeVersion({ workId: 'w', chapters: [C.newChapter('1', '가 문단이다.\n나 문단이다.')] });
+  const r = await A.sceneAction(env.engine, newWork(), { ver, chapterIndex: 0, start: 0, end: 1, action: '묘사 보강' });
+  assert.equal(r.link.ok, null); assert.ok(r.link.error);
+});
+test('고증: 원고에 없는 인용은 버리고, 출처를 지어내지 않는다고 프롬프트에 못박는다', async () => {
+  const env = setup({}); const work = newWork(); await env.storage.putWork(work);
+  const base = await baseVersion(env, work, '', { chapters: [C.newChapter('1', '1980년대 시장에서 핸드폰을 꺼냈다.')] });
+  const job = A.buildJob('period', work, { baseVersionId: base.id, era: '1980년대 서울' }, { chapterCount: 1 }); await env.storage.putJob(job); await env.runner.run(job);
+  assert.deepEqual(job.report.period.items.map((i) => i.category), ['시대착오']); assert.equal(job.report.period.dropped, 1);
+  assert.match(env.sample.mock.calls[0].prompt, /출처·연도를 지어내지 말고/);
+});
+test('연속성 점검(자동 수정 없음): 충돌은 작가 확인 목록으로만 남는다', async () => {
+  const env = setup({}); env.sample.mock.conflicts = [{ kind: '나이', quote: '53세', established: '52세', problem: '불일치', severity: '중요', maybeIntentional: false, fix: '52세로' }];
+  const work = newWork(); await env.storage.putWork(work); const base = await baseVersion(env, work, '본문입니다.');
+  const job = A.buildJob('continuity', work, { baseVersionId: base.id, noFix: true }, { chapterCount: 2 }); await env.storage.putJob(job); await env.runner.run(job);
+  assert.equal(job.status, 'done'); assert.equal(job.resultVersionId, null); assert.equal(job.report.continuity.confirm.length, 2); assert.equal(job.report.continuity.fixed.length, 0);
+});
