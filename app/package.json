@@ -1,0 +1,11 @@
+{
+  "name": "novel-studio",
+  "private": true,
+  "version": "0.1.0",
+  "description": "소설 작업실 — 1단계(AI 없는 기반)",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build": "node build.js"
+  },
+  "devDependencies": { "jszip": "3.10.1" }
+}
